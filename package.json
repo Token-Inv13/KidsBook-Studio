@@ -1,0 +1,113 @@
+{
+  "name": "kidsbook-studio",
+  "version": "0.1.0",
+  "description": "Complete desktop studio for children's book creation and Amazon KDP publishing",
+  "author": "KidsBook Studio",
+  "main": "./electron/main.js",
+  "homepage": "./",
+  "scripts": {
+    "start": "concurrently \"npm run start:react\" \"wait-on http://localhost:3000 && npm run start:electron\"",
+    "start:react": "react-scripts start",
+    "start:electron": "electron .",
+    "build": "react-scripts build",
+    "build:electron": "npm run build && electron-builder",
+    "dist": "npm run build && electron-builder --win",
+    "dist:dir": "npm run build && electron-builder --win --dir",
+    "test": "react-scripts test",
+    "eject": "react-scripts eject"
+  },
+  "build": {
+    "appId": "com.kidsbook.studio",
+    "productName": "KidsBook Studio",
+    "copyright": "Copyright © 2026 KidsBook Studio",
+    "extends": null,
+    "files": [
+      "build/**/*",
+      "electron/**/*",
+      "package.json",
+      "!**/*.map"
+    ],
+    "extraResources": [
+      {
+        "from": "assets",
+        "to": "assets",
+        "filter": ["**/*"]
+      }
+    ],
+    "directories": {
+      "buildResources": "assets",
+      "output": "dist",
+      "app": "."
+    },
+    "asar": true,
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "publisherName": "KidsBook Studio",
+      "verifyUpdateCodeSignature": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "KidsBook Studio",
+      "deleteAppDataOnUninstall": false,
+      "runAfterFinish": true
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "icon": "assets/icon.icns",
+      "category": "public.app-category.productivity"
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "icon": "assets/icon.png",
+      "category": "Office"
+    }
+  },
+  "dependencies": {
+    "autoprefixer": "^10.4.16",
+    "electron-store": "^8.1.0",
+    "express": "^4.18.2",
+    "jspdf": "^2.5.2",
+    "keytar": "^7.9.0",
+    "lucide-react": "^0.294.0",
+    "openai": "^4.20.1",
+    "postcss": "^8.4.31",
+    "react": "^18.2.0",
+    "react-beautiful-dnd": "^13.1.1",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^6.20.0",
+    "react-scripts": "^5.0.1",
+    "tailwindcss": "^3.3.5",
+    "uuid": "^9.0.1"
+  },
+  "optionalDependencies": {},
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "electron": "^27.1.0",
+    "electron-builder": "^24.6.4",
+    "wait-on": "^7.2.0"
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
+  }
+}
