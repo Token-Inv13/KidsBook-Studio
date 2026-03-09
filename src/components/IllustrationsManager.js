@@ -6,12 +6,12 @@ import { buildSceneDescription } from '../utils/sceneBuilder';
 import { getRecommendedDalleParams } from '../utils/imageRatioCalculator';
 import illustrationQueue from '../utils/illustrationQueue';
 import ImageVariantSelector from './ImageVariantSelector';
-import { v4 as uuidv4 } from 'uuid';
-import { resolvePageImageUrl, toFileUrl } from '../utils/imageUrlResolver';
+import { resolvePageImageUrl } from '../utils/imageUrlResolver';
 import { getDynamicTableHeight, getVirtualWindow, shouldUseVirtualization } from '../utils/illustrationsListLayout';
 import { buildIllustrationPrompt } from '../utils/illustrationPromptBuilder';
 import { validateVisualIdentitySpec } from '../utils/visualIdentitySpec';
 import { stableHash } from '../utils/hash';
+import { finalizePageIllustrationSelection } from '../utils/illustrationPersistence';
 
 /**
  * IllustrationsManager Component
@@ -138,6 +138,11 @@ function IllustrationsManager({ onOpenPage, onNavigateToCharacters }) {
     const illustrationVariants = page?.illustration?.variants;
     if (Array.isArray(illustrationVariants) && illustrationVariants.length > 0) {
       return illustrationVariants;
+    }
+
+    const legacyVariants = page?.illustration?.allVariants;
+    if (Array.isArray(legacyVariants) && legacyVariants.length > 0) {
+      return legacyVariants;
     }
 
     if (Array.isArray(page?.illustrationVariants) && page.illustrationVariants.length > 0) {
@@ -336,54 +341,7 @@ function IllustrationsManager({ onOpenPage, onNavigateToCharacters }) {
     let consistency = { isConsistent: true, score: 1, matchedTokens: [], expectedTokens: [] };
     let negativePromptUsed = '';
     let finalPromptUsed = '';
-    let finalImageUrl = null;
-    let localImagePath = null;
     let lastBatchError = null;
-
-    const validateImageOpen = async (imageUrl) => {
-      await new Promise((resolve, reject) => {
-        const testImage = new window.Image();
-        const timeout = window.setTimeout(() => {
-          testImage.onload = null;
-          testImage.onerror = null;
-          reject(new Error('Image opening timed out'));
-        }, 10000);
-
-        testImage.onload = () => {
-          window.clearTimeout(timeout);
-          resolve();
-        };
-
-        testImage.onerror = () => {
-          window.clearTimeout(timeout);
-          reject(new Error('Image cannot be opened'));
-        };
-
-        const isFileUrl = imageUrl.startsWith('file://');
-        if (isFileUrl) {
-          testImage.src = imageUrl;
-          return;
-        }
-
-        const cacheBust = `cb=${Date.now()}`;
-        testImage.src = imageUrl.includes('?') ? `${imageUrl}&${cacheBust}` : `${imageUrl}?${cacheBust}`;
-      });
-    };
-
-    const validateDownloadedFile = async (filePath) => {
-      if (!(window.electron && window.electron.fs && window.electron.fs.stat)) {
-        return;
-      }
-
-      const statResult = await window.electron.fs.stat(filePath);
-      if (!statResult?.success || !statResult?.isFile) {
-        throw new Error(statResult?.error || 'Downloaded file stat failed');
-      }
-
-      if (Number(statResult.size) < 10 * 1024) {
-        throw new Error(`Downloaded file too small (${statResult.size} bytes)`);
-      }
-    };
 
     const generateWithConsistency = async (batchRetryIndex) => {
       let candidateData = null;
@@ -505,29 +463,6 @@ function IllustrationsManager({ onOpenPage, onNavigateToCharacters }) {
         negativePromptUsed = generated.negativePromptUsed;
         finalPromptUsed = generated.finalPromptUsed;
 
-        if (window.electron && window.electron.fs && window.electron.fs.downloadImage) {
-          const timestamp = Date.now();
-          const imagePath = `${currentProject.path}/images/page_${page.number}_${timestamp}_attempt${batchAttempt}.png`;
-
-          console.log('[IllustrationsManager] Downloading image for page', page.number, 'to:', imagePath);
-          const downloadResult = await window.electron.fs.downloadImage(data.url, imagePath);
-
-          if (!downloadResult || !downloadResult.success) {
-            throw new Error(`Image download failed: ${downloadResult?.error || 'unknown error'}`);
-          }
-
-          await validateDownloadedFile(imagePath);
-          finalImageUrl = toFileUrl(imagePath);
-          localImagePath = imagePath;
-          await validateImageOpen(finalImageUrl);
-          console.log('[IllustrationsManager] Image downloaded and validated:', imagePath);
-        } else {
-          console.warn('[IllustrationsManager] Electron bridge not available, validating remote URL directly');
-          finalImageUrl = data.url;
-          localImagePath = null;
-          await validateImageOpen(finalImageUrl);
-        }
-
         attempts.push({ attempt: batchAttempt, status: 'success' });
         break;
       } catch (batchError) {
@@ -547,25 +482,22 @@ function IllustrationsManager({ onOpenPage, onNavigateToCharacters }) {
       }
     }
 
-    if (!data || !finalImageUrl) {
+    if (!data) {
       throw lastBatchError || new Error(`Echec final de generation pour la page ${page.number}`);
     }
 
-    // Save illustration to page
-    const illustration = {
-      id: uuidv4(),
-      url: finalImageUrl,
-      originalUrl: data.url,
-      localPath: localImagePath,
+    const selectedVariant = {
+      url: data.url,
+      requestId: data.requestId || null,
       sceneDescription: scene,
       revised_prompt: data.revised_prompt,
+      promptFinal: finalPromptUsed,
       consistencyScore: consistency.score,
       consistencyMatchedTokens: consistency.matchedTokens,
       consistencyAnchorRequirementMet: consistency.anchorRequirementMet,
       consistencyAnchorMatchedTokens: consistency.anchorMatchedTokens,
       consistencyAnchorExpectedTokens: consistency.anchorExpectedTokens,
       negativePromptUsed,
-      selectedAt: new Date().toISOString(),
       variantIndex: 0,
       dalleParams,
       batchGenerated: true
@@ -584,15 +516,13 @@ function IllustrationsManager({ onOpenPage, onNavigateToCharacters }) {
       attempts
     };
 
-    console.log('[IllustrationsManager] Saving illustration for page', page.number, 'with URL:', finalImageUrl);
-    await updateProject((prevProject) => {
-      const updatedPages = prevProject.pages.map(p =>
-        p.id === page.id
-          ? { ...p, illustration, imageUrl: finalImageUrl, imageLocalPath: localImagePath, generationMeta }
-          : p
-      );
-
-      return { pages: updatedPages };
+    console.log('[IllustrationsManager] Persisting final illustration for page', page.number);
+    const { illustration } = await finalizePageIllustrationSelection({
+      currentProject,
+      page,
+      variant: selectedVariant,
+      generationMeta,
+      updateProject
     });
     console.log('[IllustrationsManager] Illustration saved successfully');
 
@@ -918,10 +848,39 @@ function IllustrationsManager({ onOpenPage, onNavigateToCharacters }) {
         <ImageVariantSelector
           variants={currentVariants}
           onSelect={async (variant, index) => {
-            // Handle variant selection
-            setShowVariantSelector(false);
-            setCurrentVariants([]);
-            setCurrentPage(null);
+            try {
+              if (!currentPage) {
+                throw new Error('Page courante introuvable pour la sélection de variante.');
+              }
+
+              setError(null);
+              await finalizePageIllustrationSelection({
+                currentProject,
+                page: currentPage,
+                variant: {
+                  ...variant,
+                  variantIndex: index,
+                  batchGenerated: false
+                },
+                generationMeta: {
+                  ...(currentPage.generationMeta || {}),
+                  requestId: variant.requestId || currentPage.generationMeta?.requestId || null,
+                  promptFinal: variant.promptFinal || currentPage.generationMeta?.promptFinal || null,
+                  revisedPrompt: variant.revised_prompt || currentPage.generationMeta?.revisedPrompt || '',
+                  createdAt: currentPage.generationMeta?.createdAt || new Date().toISOString(),
+                  model: currentPage.generationMeta?.model || null,
+                  size: variant.dalleParams?.size || currentPage.generationMeta?.size || null,
+                  quality: variant.dalleParams?.quality || currentPage.generationMeta?.quality || 'standard',
+                  status: 'ready'
+                },
+                updateProject
+              });
+              setShowVariantSelector(false);
+              setCurrentVariants([]);
+              setCurrentPage(null);
+            } catch (selectionError) {
+              setError(selectionError.message || 'Impossible de retenir cette variante.');
+            }
           }}
           onClose={() => {
             setShowVariantSelector(false);

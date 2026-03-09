@@ -9,6 +9,7 @@ import ImageVariantSelector from './ImageVariantSelector';
 import { resolvePageImageUrl } from '../utils/imageUrlResolver';
 import { buildIllustrationPrompt } from '../utils/illustrationPromptBuilder';
 import { validateVisualIdentitySpec } from '../utils/visualIdentitySpec';
+import { finalizePageIllustrationSelection } from '../utils/illustrationPersistence';
 
 const PageEditor = ({ pageId }) => {
   const { currentProject, updateProject, openaiServiceUrl } = useApp();
@@ -169,6 +170,7 @@ const PageEditor = ({ pageId }) => {
         let bestCandidate = null;
         let safeMode = false;
         let negativePromptUsed = '';
+        let finalPromptUsed = '';
 
         for (let attempt = 0; attempt < maxConsistencyAttempts; attempt += 1) {
           const pageContextText = [
@@ -187,6 +189,7 @@ const PageEditor = ({ pageId }) => {
             pageText: pageContextText
           });
           negativePromptUsed = negativePrompt;
+          finalPromptUsed = imagePrompt;
 
           let generated;
           try {
@@ -216,7 +219,7 @@ const PageEditor = ({ pageId }) => {
           consistency = validateRevisedPromptConsistency(generated.revised_prompt, currentProject.visualIdentity);
 
           if (!bestCandidate || consistency.score > bestCandidate.consistency.score) {
-            bestCandidate = { generated, consistency };
+            bestCandidate = { generated, consistency, prompt: imagePrompt };
           }
 
           if (consistency.isConsistent) {
@@ -245,6 +248,7 @@ const PageEditor = ({ pageId }) => {
         if (!data && bestCandidate && bestCandidate.consistency.anchorRequirementMet && passesFallbackThreshold) {
           data = bestCandidate.generated;
           consistency = bestCandidate.consistency;
+          finalPromptUsed = bestCandidate.prompt || finalPromptUsed;
           console.warn(
             `[PageEditor] Variant ${i + 1}: accepting best candidate (score ${consistency.score.toFixed(2)}).`
           );
@@ -257,11 +261,13 @@ const PageEditor = ({ pageId }) => {
 
         variants.push({
           url: data.url,
+          requestId: data.requestId || null,
           revised_prompt: data.revised_prompt,
           generatedAt: new Date().toISOString(),
           sceneDescription: scene,
           dalleParams,
           negativePromptUsed,
+          promptFinal: finalPromptUsed,
           consistencyScore: consistency.score,
           consistencyMatchedTokens: consistency.matchedTokens,
           consistencyAnchorRequirementMet: consistency.anchorRequirementMet,
@@ -288,25 +294,26 @@ const PageEditor = ({ pageId }) => {
 
   const handleSelectVariant = async (variant, index) => {
     try {
-      // Save selected variant to page
-      const illustration = {
-        id: uuidv4(),
-        url: variant.url,
-        sceneDescription: variant.sceneDescription,
-        revised_prompt: variant.revised_prompt,
-        selectedAt: new Date().toISOString(),
-        variantIndex: index,
-        allVariants: generatedVariants,
-        dalleParams: variant.dalleParams
-      };
-
-      const updatedPages = currentProject.pages.map(p => 
-        p.id === pageId 
-          ? { ...p, illustration, imageUrl: variant.url }
-          : p
-      );
-
-      await updateProject({ pages: updatedPages });
+      await finalizePageIllustrationSelection({
+        currentProject,
+        page,
+        variant: {
+          ...variant,
+          variantIndex: index,
+          batchGenerated: false
+        },
+        generationMeta: {
+          requestId: variant.requestId || null,
+          promptFinal: variant.promptFinal || null,
+          revisedPrompt: variant.revised_prompt || '',
+          createdAt: variant.generatedAt || new Date().toISOString(),
+          model: null,
+          size: variant.dalleParams?.size || null,
+          quality: variant.dalleParams?.quality || 'standard',
+          status: 'ready'
+        },
+        updateProject
+      });
       setShowVariantSelector(false);
       setGeneratedVariants([]);
       setSceneDescription('');

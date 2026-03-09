@@ -1,6 +1,8 @@
 import { v4 as uuidv4 } from 'uuid';
 
 export const PROJECT_SCHEMA_VERSION = 1;
+export const PAGE_ILLUSTRATION_ROLE = 'page-illustration';
+export const CHARACTER_REFERENCE_ROLE = 'character-reference';
 
 const DEFAULT_BLEED_INCHES = 0.125;
 
@@ -110,11 +112,11 @@ const normalizeMetadata = (project = {}) => ({
   tags: Array.isArray(project.metadata?.tags) ? project.metadata.tags.filter(Boolean) : []
 });
 
-const normalizeImageEntry = (image = {}, pageId = null) => {
+export const createProjectImageAsset = (image = {}, pageId = null) => {
   const localPath = toNonEmptyString(image.localPath || image.imageLocalPath || image.referenceImagePath);
   const url = toNonEmptyString(image.url || image.imageUrl || image.referenceImage);
-  const role = toNonEmptyString(image.role) || 'page-illustration';
-  const derivedId = pageId ? `${role}:${pageId}` : (role === 'character-reference' ? 'character-reference:main' : uuidv4());
+  const role = toNonEmptyString(image.role) || PAGE_ILLUSTRATION_ROLE;
+  const derivedId = pageId ? `${role}:${pageId}` : (role === CHARACTER_REFERENCE_ROLE ? `${CHARACTER_REFERENCE_ROLE}:main` : uuidv4());
   const id = toNonEmptyString(image.id) || derivedId;
 
   return {
@@ -125,9 +127,18 @@ const normalizeImageEntry = (image = {}, pageId = null) => {
     localPath: localPath || null,
     originalUrl: toNonEmptyString(image.originalUrl) || null,
     revisedPrompt: toNonEmptyString(image.revisedPrompt || image.revised_prompt) || null,
+    promptFinal: toNonEmptyString(image.promptFinal) || null,
+    model: toNonEmptyString(image.model) || null,
+    size: toNonEmptyString(image.size) || null,
+    quality: toNonEmptyString(image.quality) || null,
+    requestId: toNonEmptyString(image.requestId) || null,
+    generationStatus: toNonEmptyString(image.generationStatus) || 'ready',
+    sourcePageId: toNonEmptyString(image.sourcePageId) || pageId || null,
     createdAt: toNonEmptyString(image.createdAt || image.selectedAt || image.generatedAt) || null
   };
 };
+
+const normalizeImageEntry = (image = {}, pageId = null) => createProjectImageAsset(image, pageId);
 
 const normalizePage = (page = {}, index = 0) => {
   const normalizedPage = {
@@ -137,6 +148,7 @@ const normalizePage = (page = {}, index = 0) => {
     template: toNonEmptyString(page.template) || 'mixte',
     textBlocks: Array.isArray(page.textBlocks) ? page.textBlocks : [],
     imageZones: Array.isArray(page.imageZones) ? page.imageZones : [],
+    imageAssetId: toNonEmptyString(page.imageAssetId || page.illustration?.assetId) || null,
     imageUrl: toNonEmptyString(page.imageUrl) || null,
     imageLocalPath: toNonEmptyString(page.imageLocalPath) || null
   };
@@ -144,9 +156,14 @@ const normalizePage = (page = {}, index = 0) => {
   if (page.illustration && typeof page.illustration === 'object') {
     normalizedPage.illustration = {
       ...page.illustration,
+      assetId: toNonEmptyString(page.illustration.assetId || normalizedPage.imageAssetId) || null,
       url: toNonEmptyString(page.illustration.url) || normalizedPage.imageUrl,
       localPath: toNonEmptyString(page.illustration.localPath) || normalizedPage.imageLocalPath || null
     };
+  }
+
+  if (!normalizedPage.imageAssetId && (normalizedPage.imageUrl || normalizedPage.imageLocalPath || normalizedPage.illustration?.url || normalizedPage.illustration?.localPath)) {
+    normalizedPage.imageAssetId = `${PAGE_ILLUSTRATION_ROLE}:${normalizedPage.id}`;
   }
 
   return normalizedPage;
@@ -158,9 +175,19 @@ const buildImagesIndex = (project) => {
   for (const page of project.pages) {
     if (page.imageUrl || page.imageLocalPath || page.illustration?.url || page.illustration?.localPath) {
       images.push(normalizeImageEntry({
+        id: page.imageAssetId || page.illustration?.assetId || undefined,
         ...page.illustration,
+        role: PAGE_ILLUSTRATION_ROLE,
         imageUrl: page.imageUrl,
-        imageLocalPath: page.imageLocalPath
+        imageLocalPath: page.imageLocalPath,
+        sourcePageId: page.id,
+        promptFinal: page.generationMeta?.promptFinal,
+        model: page.generationMeta?.model,
+        size: page.generationMeta?.size,
+        quality: page.generationMeta?.quality,
+        requestId: page.generationMeta?.requestId,
+        generationStatus: 'ready',
+        createdAt: page.generationMeta?.createdAt || page.illustration?.selectedAt
       }, page.id));
     }
   }
@@ -169,7 +196,7 @@ const buildImagesIndex = (project) => {
   if (mainCharacter?.referenceImage || mainCharacter?.referenceImagePath) {
     images.push(normalizeImageEntry({
       id: 'main-character-reference',
-      role: 'character-reference',
+      role: CHARACTER_REFERENCE_ROLE,
       referenceImage: mainCharacter.referenceImage,
       referenceImagePath: mainCharacter.referenceImagePath,
       createdAt: project.visualIdentity?.validatedAt || null
@@ -300,6 +327,26 @@ export const validateProjectSchema = (project) => {
 
   if (!Array.isArray(project.images)) {
     errors.push('images doit etre un tableau.');
+  } else {
+    const seenImageIds = new Set();
+    project.images.forEach((image, index) => {
+      if (!image || typeof image !== 'object') {
+        errors.push(`images[${index}] est invalide.`);
+        return;
+      }
+
+      if (!toNonEmptyString(image.id)) {
+        errors.push(`images[${index}].id est requis.`);
+      } else if (seenImageIds.has(image.id)) {
+        errors.push(`images[${index}].id est duplique.`);
+      } else {
+        seenImageIds.add(image.id);
+      }
+
+      if (image.pageId && !project.pages.some((page) => page.id === image.pageId)) {
+        errors.push(`images[${index}].pageId reference une page inconnue.`);
+      }
+    });
   }
 
   return {
