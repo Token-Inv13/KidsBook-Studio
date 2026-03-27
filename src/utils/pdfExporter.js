@@ -439,8 +439,14 @@ export async function savePDFToFile(pdfBlob, filename) {
     filters: [{ name: 'PDF Files', extensions: ['pdf'] }]
   });
 
-  if (!result || result.canceled || result.success === false) {
-    throw new Error('Enregistrement annulé ou impossible');
+  if (!result || result.canceled) {
+    const error = new Error('Enregistrement annulé');
+    error.canceled = true;
+    throw error;
+  }
+
+  if (result.success === false) {
+    throw new Error(result.error || 'Enregistrement impossible');
   }
   
   return result;

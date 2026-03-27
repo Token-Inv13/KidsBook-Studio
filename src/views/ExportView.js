@@ -2,8 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { AlertCircle, FileText, Image, Package, Download, CheckCircle } from 'lucide-react';
 import PreflightReport from '../components/PreflightReport';
-import { runPreflightCheck } from '../utils/preflightCheck';
+import { CATEGORY, runPreflightCheck } from '../utils/preflightCheck';
 import { exportInteriorPDF, exportCoverPDF, savePDFToFile } from '../utils/pdfExporter';
+import { createExportPackage, saveZipToFile } from '../utils/exportPackage';
 import { generateCoverTemplate } from '../utils/coverGenerator';
 import { getPrintFormatInches } from '../utils/printFormat';
 
@@ -71,9 +72,13 @@ const ExportView = () => {
       setExportProgress('Export terminé !');
       setTimeout(() => setExportProgress(null), 3000);
     } catch (error) {
-      console.error('Export failed:', error);
-      alert('Erreur lors de l\'export : ' + error.message);
-      setExportProgress(null);
+      if (error?.canceled) {
+        setExportProgress(null);
+      } else {
+        console.error('Export failed:', error);
+        alert('Erreur lors de l\'export : ' + error.message);
+        setExportProgress(null);
+      }
     } finally {
       setIsExporting(false);
     }
@@ -103,9 +108,13 @@ const ExportView = () => {
       setExportProgress('Export terminé !');
       setTimeout(() => setExportProgress(null), 3000);
     } catch (error) {
-      console.error('Cover export failed:', error);
-      alert('Erreur lors de l\'export de la couverture : ' + error.message);
-      setExportProgress(null);
+      if (error?.canceled) {
+        setExportProgress(null);
+      } else {
+        console.error('Cover export failed:', error);
+        alert('Erreur lors de l\'export de la couverture : ' + error.message);
+        setExportProgress(null);
+      }
     } finally {
       setIsExporting(false);
     }
@@ -150,6 +159,49 @@ const ExportView = () => {
     }
   };
 
+  const handleExportArchive = async () => {
+    if (!preflightReport?.canExport) {
+      alert('Veuillez corriger les erreurs critiques avant d\'exporter');
+      return;
+    }
+
+    const effectiveCoverData = coverData || generateCoverTemplate(currentProject);
+    if (!effectiveCoverData) {
+      alert('Couverture invalide. Veuillez réessayer.');
+      return;
+    }
+
+    setIsExporting(true);
+    setExportProgress('Création du package complet...');
+
+    try {
+      setExportProgress('Génération des fichiers du package...');
+      const packageBlob = await createExportPackage(
+        currentProject,
+        effectiveCoverData,
+        preflightReport
+      );
+
+      setExportProgress('Enregistrement du package...');
+
+      const baseName = currentProject.title || 'book';
+      await saveZipToFile(packageBlob, `${baseName}_kdp_package.zip`);
+
+      setExportProgress('Package créé avec succès !');
+      setTimeout(() => setExportProgress(null), 3000);
+    } catch (error) {
+      if (error?.canceled) {
+        setExportProgress(null);
+      } else {
+        console.error('Package export failed:', error);
+        alert('Erreur lors de la création du package : ' + error.message);
+        setExportProgress(null);
+      }
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   if (!currentProject) {
     return (
       <div className="h-full flex items-center justify-center bg-gray-50">
@@ -167,6 +219,10 @@ const ExportView = () => {
   }
 
   const printFormat = getPrintFormatInches(currentProject?.format);
+  const resolutionIssues = preflightReport?.issuesByCategory?.[CATEGORY.RESOLUTION] || [];
+  const resolutionReady = resolutionIssues.every(
+    (issue) => issue.severity !== 'critical' && issue.severity !== 'info'
+  );
 
   return (
     <div className="h-full bg-gray-50 overflow-y-auto">
@@ -289,7 +345,7 @@ const ExportView = () => {
                 Intérieur + Couverture + Rapport de vérification
               </p>
               <button
-                onClick={handleExportPackage}
+                onClick={handleExportArchive}
                 disabled={!preflightReport?.canExport || isExporting}
                 className="w-full px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700 disabled:bg-gray-300 disabled:cursor-not-allowed flex items-center justify-center space-x-2"
               >
@@ -375,7 +431,7 @@ const ExportView = () => {
               label="Couverture configurée"
             />
             <ChecklistItem
-              checked={true}
+              checked={resolutionReady}
               label="Résolution 300 DPI minimum"
             />
           </div>

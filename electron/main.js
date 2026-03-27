@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Menu, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const Store = require('electron-store');
@@ -55,6 +55,7 @@ function validateDownloadUrl(rawUrl) {
 
 function createWindow() {
   const isDev = !app.isPackaged;
+  const isSmokeTest = process.env.KIDSBOOK_SMOKE_TEST === '1';
   mainWindow = new BrowserWindow({
     width: 1600,
     height: 1000,
@@ -63,11 +64,61 @@ function createWindow() {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
-      preload: path.join(__dirname, 'preload.js')
+      preload: path.join(__dirname, 'preload.js'),
+      devTools: isDev
     },
     icon: path.join(__dirname, '../assets/icon.png'),
+    autoHideMenuBar: !isDev,
     show: false
   });
+
+  const menuTemplate = [
+    {
+      label: 'File',
+      submenu: [
+        { role: 'quit' }
+      ]
+    },
+    {
+      label: 'Edit',
+      submenu: [
+        { role: 'undo' },
+        { role: 'redo' },
+        { type: 'separator' },
+        { role: 'cut' },
+        { role: 'copy' },
+        { role: 'paste' },
+        { role: 'selectAll' }
+      ]
+    },
+    {
+      label: 'View',
+      submenu: isDev
+        ? [
+            { role: 'reload' },
+            { role: 'forceReload' },
+            { role: 'toggleDevTools' },
+            { type: 'separator' },
+            { role: 'resetZoom' },
+            { role: 'zoomIn' },
+            { role: 'zoomOut' }
+          ]
+        : [
+            { role: 'resetZoom' },
+            { role: 'zoomIn' },
+            { role: 'zoomOut' }
+          ]
+    },
+    {
+      label: 'Window',
+      submenu: [
+        { role: 'minimize' },
+        { role: 'close' }
+      ]
+    }
+  ];
+
+  Menu.setApplicationMenu(Menu.buildFromTemplate(menuTemplate));
 
   // Load the app
   const startURL = isDev
@@ -75,14 +126,49 @@ function createWindow() {
     : `file://${path.join(__dirname, '../build/index.html')}`;
   
   mainWindow.loadURL(startURL);
+
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:/i.test(url)) {
+      shell.openExternal(url);
+    }
+    return { action: 'deny' };
+  });
+
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    const currentUrl = mainWindow?.webContents?.getURL() || '';
+    if (url !== currentUrl) {
+      event.preventDefault();
+      if (/^https?:/i.test(url)) {
+        shell.openExternal(url);
+      }
+    }
+  });
+
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    if (isDev) {
+      return;
+    }
+
+    const key = String(input.key || '').toUpperCase();
+    const opensDevTools = key === 'F12'
+      || ((input.control || input.meta) && input.shift && ['I', 'J', 'C'].includes(key));
+
+    if (opensDevTools) {
+      event.preventDefault();
+    }
+  });
   
   // Show window when ready
   mainWindow.once('ready-to-show', () => {
-    mainWindow.show();
+    if (!isSmokeTest) {
+      mainWindow.show();
+    }
   });
 
   if (isDev) {
     mainWindow.webContents.openDevTools();
+  } else if (mainWindow.webContents.isDevToolsOpened()) {
+    mainWindow.webContents.closeDevTools();
   }
 
   mainWindow.on('closed', () => {

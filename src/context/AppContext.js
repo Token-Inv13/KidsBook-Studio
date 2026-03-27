@@ -31,9 +31,11 @@ export const AppProvider = ({ children }) => {
   const [currentProject, setCurrentProject] = useState(null);
   const [openaiPort, setOpenaiPort] = useState(null);
   const [autoSaveEnabled, setAutoSaveEnabled] = useState(true);
+  const [autosaveRevision, setAutosaveRevision] = useState(0);
   
   // Queue system to prevent race conditions during rapid updates
   const updateQueueRef = React.useRef(Promise.resolve());
+  const latestProjectsRef = React.useRef([]);
 
   useEffect(() => {
     loadProjects();
@@ -41,13 +43,88 @@ export const AppProvider = ({ children }) => {
   }, []);
 
   useEffect(() => {
-    if (autoSaveEnabled && currentProject) {
-      const timer = setTimeout(() => {
-        saveProject(currentProject);
-      }, 2000);
-      return () => clearTimeout(timer);
+    latestProjectsRef.current = projects;
+  }, [projects]);
+
+  useEffect(() => {
+    if (!autoSaveEnabled || !currentProject || autosaveRevision === 0) {
+      return undefined;
     }
-  }, [currentProject, autoSaveEnabled]);
+
+    const timer = setTimeout(async () => {
+      try {
+        const savedProject = await persistProjectFile(currentProject);
+        const updatedProjects = latestProjectsRef.current.map((project) =>
+          project.id === savedProject.id ? savedProject : normalizeProjectShape(project)
+        );
+        const savedProjects = await writeProjectsToStore(updatedProjects);
+
+        setProjects(savedProjects);
+        setCurrentProject((prevProject) =>
+          prevProject?.id === savedProject.id ? savedProject : prevProject
+        );
+      } catch (error) {
+        console.error('[AppContext] Autosave failed:', error);
+      }
+    }, 2000);
+
+    return () => clearTimeout(timer);
+  }, [autosaveRevision, currentProject, autoSaveEnabled]);
+
+  const writeProjectsToStore = async (projectsList) => {
+    const normalizedProjects = projectsList.map(normalizeProjectShape);
+    await electronBridge.store.set('projects', normalizedProjects);
+    return normalizedProjects;
+  };
+
+  const persistProjectFile = async (project, options = {}) => {
+    const { touchUpdatedAt = true } = options;
+
+    if (!project || !project.path) {
+      return normalizeProjectShape(project);
+    }
+
+    const projectData = prepareProjectForSave(
+      touchUpdatedAt
+        ? {
+            ...project,
+            updatedAt: new Date().toISOString()
+          }
+        : project
+    );
+
+    const projectFile = `${project.path}/project.json`;
+    await electronBridge.fs.writeFile(projectFile, JSON.stringify(projectData, null, 2));
+
+    return projectData;
+  };
+
+  const saveProject = async (project, options = {}) => {
+    const savedProject = await persistProjectFile(project, options);
+
+    if (!savedProject?.id) {
+      return savedProject;
+    }
+
+    const sourceProjects = latestProjectsRef.current;
+    const nextProjects = sourceProjects.some((entry) => entry.id === savedProject.id)
+      ? sourceProjects.map((entry) => (entry.id === savedProject.id ? savedProject : normalizeProjectShape(entry)))
+      : [...sourceProjects, savedProject];
+    const savedProjects = await writeProjectsToStore(nextProjects);
+
+    setProjects(savedProjects);
+    setCurrentProject((prevProject) =>
+      prevProject?.id === savedProject.id ? savedProject : prevProject
+    );
+
+    return savedProject;
+  };
+
+  const saveProjects = async (projectsList) => {
+    const normalizedProjects = await writeProjectsToStore(projectsList);
+    setProjects(normalizedProjects);
+    return normalizedProjects;
+  };
 
   const initializeOpenAI = async () => {
     const port = await electronBridge.openai.getPort();
@@ -74,15 +151,6 @@ export const AppProvider = ({ children }) => {
       console.error('[AppContext] Error loading projects:', error);
       setProjects([]);
     }
-  };
-
-  const saveProjects = async (projectsList) => {
-    const normalizedProjects = projectsList.map(normalizeProjectShape);
-    console.log('[AppContext] Saving projects to store:', normalizedProjects.length);
-    await electronBridge.store.set('projects', normalizedProjects);
-    console.log('[AppContext] Setting projects state:', normalizedProjects.length);
-    setProjects(normalizedProjects);
-    console.log('[AppContext] Projects state updated');
   };
 
   const createProject = async (projectData) => {
@@ -118,36 +186,19 @@ export const AppProvider = ({ children }) => {
 
       newProject.path = projectPath;
       const normalizedProject = prepareProjectForSave(newProject);
+      const savedProject = await persistProjectFile(normalizedProject);
 
       console.log('[AppContext] Current projects count:', projects.length);
-      const updatedProjects = [...projects, normalizedProject];
+      const updatedProjects = [...projects, savedProject];
       console.log('[AppContext] Updated projects count:', updatedProjects.length);
       
       await saveProjects(updatedProjects);
-      await saveProject(normalizedProject);
 
       console.log('[AppContext] Project created successfully');
-      return normalizedProject;
+      return savedProject;
     } catch (error) {
       console.error('[AppContext] Error creating project:', error);
       throw error;
-    }
-  };
-
-  const saveProject = async (project) => {
-    if (!project || !project.path) return;
-
-    const projectData = prepareProjectForSave({
-      ...project,
-      updatedAt: new Date().toISOString()
-    });
-
-    const projectFile = `${project.path}/project.json`;
-    await electronBridge.fs.writeFile(projectFile, JSON.stringify(projectData, null, 2));
-
-    // Update current project if it's the one being saved
-    if (currentProject?.id === project.id) {
-      setCurrentProject(projectData);
     }
   };
 
@@ -223,20 +274,11 @@ export const AppProvider = ({ children }) => {
 
           console.log('[AppContext] Updated project has visualIdentity:', !!updatedProject.visualIdentity);
 
-          // Save individual project file and wait for completion
-          saveProject(updatedProject).then(() => {
-            // Update projects list after project file is saved
-            setProjects(prevProjects => {
-              const updatedProjects = prevProjects.map(p => 
-                p.id === updatedProject.id ? updatedProject : normalizeProjectShape(p)
-              );
-              // Save to store and resolve when done
-              saveProjects(updatedProjects).then(() => {
-                resolve();
-              });
-              return updatedProjects;
-            });
-          });
+          setProjects((prevProjects) => prevProjects.map((project) =>
+            project.id === updatedProject.id ? updatedProject : normalizeProjectShape(project)
+          ));
+          setAutosaveRevision((revision) => revision + 1);
+          resolve(updatedProject);
           
           return updatedProject;
         });
@@ -275,12 +317,12 @@ export const AppProvider = ({ children }) => {
 
     newProject.path = projectPath;
     const normalizedProject = prepareProjectForSave(newProject);
+    const savedProject = await persistProjectFile(normalizedProject);
 
-    const updatedProjects = [...projects, normalizedProject];
+    const updatedProjects = [...projects, savedProject];
     await saveProjects(updatedProjects);
-    await saveProject(normalizedProject);
 
-    return normalizedProject;
+    return savedProject;
   };
 
   const callOpenAI = async (messages, options = {}) => {

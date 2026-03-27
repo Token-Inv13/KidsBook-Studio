@@ -5,6 +5,7 @@
 
 import { resolvePageImageUrl } from './imageUrlResolver';
 import { getPrintFormatInches } from './printFormat';
+import { getReadableTextStyle, normalizeTextBlock } from './writingLayout';
 
 /**
  * Apply print color adjustment to prevent dark prints
@@ -220,6 +221,249 @@ export function calculatePrintPixels(widthInches, heightInches, dpi = 300) {
   };
 }
 
+function hexToRgb(color) {
+  const normalized = String(color || '').trim().replace('#', '');
+  if (normalized.length !== 3 && normalized.length !== 6) {
+    return null;
+  }
+
+  const expanded = normalized.length === 3
+    ? normalized.split('').map((value) => value + value).join('')
+    : normalized;
+
+  const value = Number.parseInt(expanded, 16);
+  if (Number.isNaN(value)) {
+    return null;
+  }
+
+  return {
+    r: (value >> 16) & 255,
+    g: (value >> 8) & 255,
+    b: value & 255
+  };
+}
+
+function parseColorToRgba(color) {
+  if (!color) {
+    return null;
+  }
+
+  const normalized = String(color).trim();
+  const hex = hexToRgb(normalized);
+  if (hex) {
+    return { ...hex, a: 1 };
+  }
+
+  const match = normalized.match(/rgba?\(([^)]+)\)/i);
+  if (!match) {
+    return null;
+  }
+
+  const values = match[1].split(',').map((entry) => Number.parseFloat(entry.trim()));
+  if (values.length < 3 || values.some((entry, index) => index < 3 && Number.isNaN(entry))) {
+    return null;
+  }
+
+  return {
+    r: values[0],
+    g: values[1],
+    b: values[2],
+    a: Number.isFinite(values[3]) ? values[3] : 1
+  };
+}
+
+function getColorLuminance(color) {
+  const rgba = parseColorToRgba(color);
+  if (!rgba) {
+    return null;
+  }
+
+  const toLinear = (channel) => {
+    const normalized = channel / 255;
+    return normalized <= 0.03928
+      ? normalized / 12.92
+      : ((normalized + 0.055) / 1.055) ** 2.4;
+  };
+
+  return (0.2126 * toLinear(rgba.r)) + (0.7152 * toLinear(rgba.g)) + (0.0722 * toLinear(rgba.b));
+}
+
+async function estimateImageLuminance(imageUrl) {
+  if (!imageUrl) {
+    return null;
+  }
+
+  const img = await loadImage(imageUrl);
+  const canvas = document.createElement('canvas');
+  const sampleSize = 24;
+  canvas.width = sampleSize;
+  canvas.height = sampleSize;
+  const ctx = canvas.getContext('2d');
+
+  ctx.drawImage(img, 0, 0, sampleSize, sampleSize);
+  const { data } = ctx.getImageData(0, 0, sampleSize, sampleSize);
+
+  let total = 0;
+  for (let i = 0; i < data.length; i += 4) {
+    const r = data[i] / 255;
+    const g = data[i + 1] / 255;
+    const b = data[i + 2] / 255;
+    total += (0.2126 * r) + (0.7152 * g) + (0.0722 * b);
+  }
+
+  return total / (data.length / 4);
+}
+
+function parsePadding(padding) {
+  const normalized = String(padding || '').trim();
+  if (!normalized) {
+    return { top: 0, right: 0, bottom: 0, left: 0 };
+  }
+
+  const values = normalized
+    .split(/\s+/)
+    .map((value) => Number.parseFloat(value.replace('px', '')))
+    .filter((value) => Number.isFinite(value));
+
+  if (values.length === 0) {
+    return { top: 0, right: 0, bottom: 0, left: 0 };
+  }
+
+  if (values.length === 1) {
+    return { top: values[0], right: values[0], bottom: values[0], left: values[0] };
+  }
+
+  if (values.length === 2) {
+    return { top: values[0], right: values[1], bottom: values[0], left: values[1] };
+  }
+
+  if (values.length === 3) {
+    return { top: values[0], right: values[1], bottom: values[2], left: values[1] };
+  }
+
+  return { top: values[0], right: values[1], bottom: values[2], left: values[3] };
+}
+
+function buildWrappedLines(ctx, text, maxWidth) {
+  const normalized = String(text || '').replace(/\r\n/g, '\n');
+  const paragraphs = normalized.split('\n');
+  const lines = [];
+
+  paragraphs.forEach((paragraph, paragraphIndex) => {
+    const words = paragraph.split(/\s+/).filter(Boolean);
+
+    if (words.length === 0) {
+      lines.push('');
+    } else {
+      let currentLine = '';
+
+      words.forEach((word) => {
+        const candidate = currentLine ? `${currentLine} ${word}` : word;
+        if (currentLine && ctx.measureText(candidate).width > maxWidth) {
+          lines.push(currentLine);
+          currentLine = word;
+        } else {
+          currentLine = candidate;
+        }
+      });
+
+      if (currentLine) {
+        lines.push(currentLine);
+      }
+    }
+
+    if (paragraphIndex < paragraphs.length - 1 && paragraphs[paragraphIndex + 1] !== '') {
+      lines.push('');
+    }
+  });
+
+  return lines;
+}
+
+function drawRoundedRect(ctx, x, y, width, height, radius) {
+  const appliedRadius = Math.max(0, Math.min(radius, width / 2, height / 2));
+  ctx.beginPath();
+  ctx.moveTo(x + appliedRadius, y);
+  ctx.lineTo(x + width - appliedRadius, y);
+  ctx.quadraticCurveTo(x + width, y, x + width, y + appliedRadius);
+  ctx.lineTo(x + width, y + height - appliedRadius);
+  ctx.quadraticCurveTo(x + width, y + height, x + width - appliedRadius, y + height);
+  ctx.lineTo(x + appliedRadius, y + height);
+  ctx.quadraticCurveTo(x, y + height, x, y + height - appliedRadius);
+  ctx.lineTo(x, y + appliedRadius);
+  ctx.quadraticCurveTo(x, y, x + appliedRadius, y);
+  ctx.closePath();
+}
+
+function drawTextBlock(ctx, block, readableStyle, scale) {
+  const x = (block.x || 0) * scale;
+  const y = (block.y || 0) * scale;
+  const width = Math.max(0, (block.width || 0) * scale);
+  const height = Math.max(0, (block.height || 0) * scale);
+  const fontSize = Math.max(1, (block.fontSize || 16) * scale);
+  const padding = parsePadding(readableStyle.padding);
+  const paddingTop = padding.top * scale;
+  const paddingRight = padding.right * scale;
+  const paddingBottom = padding.bottom * scale;
+  const paddingLeft = padding.left * scale;
+  const innerWidth = Math.max(fontSize, width - paddingLeft - paddingRight);
+  const innerHeight = Math.max(fontSize, height - paddingTop - paddingBottom);
+  const backgroundColor = readableStyle.backgroundColor;
+
+  if (backgroundColor && backgroundColor !== 'transparent') {
+    ctx.save();
+    ctx.fillStyle = backgroundColor;
+    drawRoundedRect(ctx, x, y, width, height, (readableStyle.borderRadius || 0) * scale);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  ctx.save();
+  ctx.font = `${fontSize}px ${block.fontFamily || 'Arial'}`;
+  const lineHeight = fontSize * (typeof block.lineHeight === 'number' ? block.lineHeight : 1.2);
+  const lines = buildWrappedLines(ctx, block.content || block.text || '', innerWidth);
+  const maxLines = Math.max(1, Math.floor(innerHeight / lineHeight));
+  const visibleLines = lines.slice(0, maxLines);
+  ctx.fillStyle = readableStyle.color;
+  ctx.textAlign = block.textAlign || 'left';
+  ctx.textBaseline = 'top';
+
+  if (readableStyle.textShadow && readableStyle.textShadow !== 'none') {
+    const shadowColor = readableStyle.color === '#ffffff'
+      ? 'rgba(0,0,0,0.6)'
+      : 'rgba(255,255,255,0.35)';
+    ctx.shadowColor = shadowColor;
+    ctx.shadowBlur = 8 * scale;
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = 2 * scale;
+  }
+
+  if (readableStyle.WebkitTextStroke) {
+    const strokeMatch = String(readableStyle.WebkitTextStroke).match(/([\d.]+)px\s+(.+)/);
+    if (strokeMatch) {
+      ctx.lineWidth = Number.parseFloat(strokeMatch[1]) * scale;
+      ctx.strokeStyle = strokeMatch[2];
+    }
+  }
+
+  let textX = x + paddingLeft;
+  if ((block.textAlign || 'left') === 'center') {
+    textX = x + (width / 2);
+  } else if ((block.textAlign || 'left') === 'right') {
+    textX = x + width - paddingRight;
+  }
+
+  visibleLines.forEach((line, index) => {
+    const textY = y + paddingTop + (index * lineHeight);
+    if (ctx.strokeStyle && ctx.lineWidth > 0) {
+      ctx.strokeText(line, textX, textY, innerWidth);
+    }
+    ctx.fillText(line, textX, textY, innerWidth);
+  });
+
+  ctx.restore();
+}
+
 /**
  * Generate bleed area for an image
  * Extends image into bleed zone
@@ -289,9 +533,11 @@ export async function flattenPage(page, format, dpi = 300, options = {}) {
   
   // Draw illustration if present
   const imageUrl = resolvePageImageUrl(page);
+  let pageLuminance = getColorLuminance(page?.pageBackground?.color || '#FFFFFF');
   if (imageUrl) {
     
     try {
+      pageLuminance = await estimateImageLuminance(imageUrl);
       const printImage = await prepareImageForPrint(
         imageUrl,
         pixelDimensions,
@@ -310,27 +556,14 @@ export async function flattenPage(page, format, dpi = 300, options = {}) {
     const scale = dpi / 96; // Convert from screen pixels to print pixels
     
     page.textBlocks.forEach(block => {
-      ctx.save();
-      
-      // Scale and position
-      const x = (block.x || 0) * scale;
-      const y = (block.y || 0) * scale;
-      
-      // Set text properties
-      const fontSize = (block.fontSize || 16) * scale;
-      ctx.font = `${fontSize}px ${block.fontFamily || 'Arial'}`;
-      ctx.fillStyle = block.color || '#000000';
-      ctx.textAlign = block.textAlign || 'left';
-      
-      // Draw text
-      const lines = String(block.content || block.text || '').split('\n');
-      const lineHeight = fontSize * (typeof block.lineHeight === 'number' ? block.lineHeight : 1.2);
-      
-      lines.forEach((line, index) => {
-        ctx.fillText(line, x, y + (index * lineHeight) + fontSize);
-      });
-      
-      ctx.restore();
+      const normalizedBlock = normalizeTextBlock(block);
+      const readableStyle = getReadableTextStyle(
+        normalizedBlock,
+        pageLuminance,
+        Boolean(imageUrl)
+      );
+
+      drawTextBlock(ctx, normalizedBlock, readableStyle, scale);
     });
   }
   
