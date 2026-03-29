@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, Menu, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Menu, shell, session } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const Store = require('electron-store');
@@ -24,6 +24,16 @@ let openaiServicePort;
 
 const SERVICE_NAME = 'KidsBookStudio';
 const ACCOUNT_NAME = 'OpenAI_API_Key';
+const PRODUCTION_CSP = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob: https: http:",
+  "connect-src 'self' http://localhost:3001 http://127.0.0.1:3001 http://localhost:3002 http://127.0.0.1:3002 http://localhost:3003 http://127.0.0.1:3003 https:",
+  "font-src 'self' data:",
+  "object-src 'none'",
+  "base-uri 'self'"
+].join('; ');
 
 function normalizeAbsolutePath(targetPath) {
   if (typeof targetPath !== 'string' || !targetPath.trim()) {
@@ -53,9 +63,47 @@ function validateDownloadUrl(rawUrl) {
   }
 }
 
+function ensureProductionCsp(indexHtmlPath) {
+  try {
+    const html = fs.readFileSync(indexHtmlPath, 'utf-8');
+    if (html.includes('http-equiv="Content-Security-Policy"')) {
+      return;
+    }
+
+    const cspMeta = `<meta http-equiv="Content-Security-Policy" content="${PRODUCTION_CSP}" />`;
+    const updatedHtml = html.replace('<head>', `<head>\n    ${cspMeta}`);
+    if (updatedHtml !== html) {
+      fs.writeFileSync(indexHtmlPath, updatedHtml, 'utf-8');
+    }
+  } catch (error) {
+    console.warn('[Main] Unable to apply production CSP:', error.message);
+  }
+}
+
 function createWindow() {
   const isDev = !app.isPackaged;
   const isSmokeTest = process.env.KIDSBOOK_SMOKE_TEST === '1';
+
+  if (!isDev) {
+    session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+      callback({
+        responseHeaders: {
+          ...details.responseHeaders,
+          'Content-Security-Policy': [
+            "default-src 'self'; " +
+              "script-src 'self'; " +
+              "style-src 'self' 'unsafe-inline'; " +
+              "img-src 'self' data: blob: https: http:; " +
+              "connect-src 'self' http://localhost:3001 http://127.0.0.1:3001 http://localhost:3002 http://127.0.0.1:3002 http://localhost:3003 http://127.0.0.1:3003 https:; " +
+              "font-src 'self' data:; " +
+              "object-src 'none'; " +
+              "base-uri 'self';"
+          ]
+        }
+      });
+    });
+  }
+
   mainWindow = new BrowserWindow({
     width: 1600,
     height: 1000,
@@ -121,11 +169,14 @@ function createWindow() {
   Menu.setApplicationMenu(Menu.buildFromTemplate(menuTemplate));
 
   // Load the app
-  const startURL = isDev
-    ? (process.env.ELECTRON_START_URL || 'http://localhost:3000')
-    : `file://${path.join(__dirname, '../build/index.html')}`;
-  
-  mainWindow.loadURL(startURL);
+  if (isDev) {
+    const startURL = process.env.ELECTRON_START_URL || 'http://localhost:3000';
+    mainWindow.loadURL(startURL);
+  } else {
+    const productionIndexPath = path.join(__dirname, '../build/index.html');
+    ensureProductionCsp(productionIndexPath);
+    mainWindow.loadFile(productionIndexPath);
+  }
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:/i.test(url)) {
