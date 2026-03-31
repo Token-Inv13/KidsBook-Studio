@@ -42,5 +42,20 @@ out/
 electron-store/
 *.asar
 
+# Local runtime state created by Electron/Windows profiles during local runs
+.appdata/
+.dotnet/
+.localappdata/
+.userprofile/
+LocalLow/
+Microsoft/
+.nuget/
+
+# Local build outputs
+installer/obj/
+installer/NuGet/
+output/
+dist-installer/
+
 # Test projects (optional - uncomment if you don't want to commit test projects)
 # test-projects/
