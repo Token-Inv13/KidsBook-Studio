@@ -43,6 +43,12 @@ Ou pour build sans compression (plus rapide pour tests) :
 npm run dist:dir
 ```
 
+Pour générer l'installateur autonome du dépôt, utiliser aussi :
+
+```powershell
+.\scripts\build-windows-installer.ps1
+```
+
 ---
 
 ## 📁 Structure des Fichiers
@@ -55,6 +61,8 @@ dist/
 ├── win-unpacked/                       # Version non packagée (pour tests)
 └── builder-debug.yml                   # Logs de build
 ```
+
+Le script `scripts/build-windows-installer.ps1` produit également un `KidsBook Studio Setup.exe` autonome à partir du projet `installer/KidsBookInstaller.csproj`.
 
 ### Données Utilisateur
 

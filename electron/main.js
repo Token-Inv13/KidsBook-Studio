@@ -5,8 +5,18 @@ const Store = require('electron-store');
 const keytar = require('keytar');
 const { startOpenAIService, stopOpenAIService } = require('./openai-service');
 
+function getSafeDocumentsPath() {
+  try {
+    return app.getPath('documents');
+  } catch (error) {
+    const homePath = app.getPath('home');
+    console.warn('[Main] Falling back to home directory for documents path:', error.message);
+    return path.join(homePath, 'Documents');
+  }
+}
+
 // Set user data path to Documents/KidsBookStudio
-const userDataPath = path.join(app.getPath('documents'), 'KidsBookStudio');
+const userDataPath = path.join(getSafeDocumentsPath(), 'KidsBookStudio');
 if (!fs.existsSync(userDataPath)) {
   fs.mkdirSync(userDataPath, { recursive: true });
 }
