@@ -68,6 +68,10 @@ export const buildIllustrationSelectionState = ({
     size: generationMeta?.size || variant?.dalleParams?.size || null,
     quality: generationMeta?.quality || variant?.dalleParams?.quality || 'standard',
     requestId: generationMeta?.requestId || variant?.requestId || null,
+    promptSections: generationMeta?.promptSections || variant?.promptSections || null,
+    promptTrace: generationMeta?.promptTrace || variant?.promptTrace || null,
+    consistencyProfile: generationMeta?.consistencyProfile || variant?.consistencyProfile || null,
+    identityHash: generationMeta?.identityHash || variant?.identityHash || null,
     generationStatus: 'ready',
     sourcePageId: page.id,
     createdAt: selectedAt
@@ -92,7 +96,11 @@ export const buildIllustrationSelectionState = ({
     consistencyAnchorMatchedTokens: Array.isArray(variant?.consistencyAnchorMatchedTokens) ? variant.consistencyAnchorMatchedTokens : [],
     consistencyAnchorExpectedTokens: Array.isArray(variant?.consistencyAnchorExpectedTokens) ? variant.consistencyAnchorExpectedTokens : [],
     negativePromptUsed: variant?.negativePromptUsed || null,
-    batchGenerated: Boolean(variant?.batchGenerated)
+    batchGenerated: Boolean(variant?.batchGenerated),
+    promptSections: variant?.promptSections || null,
+    promptTrace: variant?.promptTrace || null,
+    consistencyProfile: variant?.consistencyProfile || null,
+    identityHash: variant?.identityHash || null
   };
 
   return { imageAsset, illustration };
@@ -154,7 +162,11 @@ export async function finalizePageIllustrationSelection({
     sourceUrl,
     createdAt: generationMeta?.createdAt || timestamp,
     updatedAt: timestamp,
-    status: 'ready'
+    status: 'ready',
+    promptSections: generationMeta?.promptSections || variant?.promptSections || null,
+    promptTrace: generationMeta?.promptTrace || variant?.promptTrace || null,
+    consistencyProfile: generationMeta?.consistencyProfile || variant?.consistencyProfile || null,
+    identityHash: generationMeta?.identityHash || variant?.identityHash || null
   };
 
   await updateProject((prevProject) => {

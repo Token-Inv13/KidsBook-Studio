@@ -9,6 +9,7 @@
     "start": "concurrently \"npm run start:react\" \"wait-on http://localhost:3000 && npm run start:electron\"",
     "start:react": "react-scripts start",
     "start:electron": "electron .",
+    "start:desktop": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-desktop.ps1",
     "build": "react-scripts build",
     "build:electron": "npm run build && electron-builder",
     "dist": "npm run build && electron-builder --win",

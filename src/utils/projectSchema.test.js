@@ -46,7 +46,21 @@ describe('projectSchema', () => {
           template: 'mixte',
           textBlocks: [],
           imageUrl: 'file:///tmp/page-1.png',
-          imageLocalPath: '/tmp/page-1.png'
+          imageLocalPath: '/tmp/page-1.png',
+          generationMeta: {
+            promptSections: {
+              invariantPrompt: 'VISUAL IDENTITY LOCK',
+              stylePrompt: 'STYLE LOCK',
+              palettePrompt: 'PALETTE LOCK'
+            },
+            promptTrace: {
+              identityHash: 'abcd1234'
+            },
+            consistencyProfile: {
+              faceHair: ['round', 'hair']
+            },
+            identityHash: 'abcd1234'
+          }
         }
       ]
     });
@@ -57,6 +71,8 @@ describe('projectSchema', () => {
     expect(migrated.format.id).toBe('8.5x8.5');
     expect(migrated.images).toHaveLength(1);
     expect(migrated.images[0].pageId).toBe('page-1');
+    expect(migrated.images[0].promptSections?.invariantPrompt).toBe('VISUAL IDENTITY LOCK');
+    expect(migrated.images[0].identityHash).toBe('abcd1234');
   });
 
   test('validates an invalid project with readable errors', () => {

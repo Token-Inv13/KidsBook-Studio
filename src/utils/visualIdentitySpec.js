@@ -1,10 +1,13 @@
-const SPEC_VERSION = '1.0';
+import { stableHash } from './hash';
+
+const SPEC_VERSION = '2.0';
 
 const toCleanString = (value) => {
   if (typeof value !== 'string') {
     return '';
   }
-  return value.trim();
+
+  return value.replace(/\s+/g, ' ').trim();
 };
 
 const normalizePalette = (palette) => {
@@ -19,6 +22,137 @@ const normalizePalette = (palette) => {
   return [...new Set(cleaned)].slice(0, 8);
 };
 
+const toTokenSet = (value) => {
+  if (!value || typeof value !== 'string') {
+    return [];
+  }
+
+  const normalized = value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+
+  return [...new Set(
+    normalized
+      .toLowerCase()
+      .replace(/[^a-z0-9\s\-#]/gi, ' ')
+      .split(/\s+/)
+      .filter((token) => token.length >= 4)
+  )];
+};
+
+const extractAnchorTokens = (value) => {
+  return toTokenSet(value)
+    .filter((token) => /[a-z0-9]/i.test(token))
+    .slice(0, 12);
+};
+
+const FACE_HAIR_KEYWORDS = [
+  'hair', 'hairstyle', 'bang', 'fringe', 'curl', 'curly', 'straight', 'ponytail', 'braid', 'bob',
+  'face', 'facial', 'eyes', 'eye', 'cheek', 'cheeks', 'nose', 'smile', 'round', 'oval', 'freckle',
+  'skin', 'brunette', 'blonde', 'auburn', 'brown',
+  'cheveux', 'coiffure', 'frange', 'boucle', 'queue', 'tresse', 'visage', 'yeux', 'joue', 'nez',
+  'sourire', 'rond', 'ovale', 'peau', 'brun', 'chatain', 'rousse'
+];
+
+const isFaceHairAnchorToken = (token) => {
+  return FACE_HAIR_KEYWORDS.some((keyword) => token.includes(keyword) || keyword.includes(token));
+};
+
+const buildCharacterLockLine = (mainCharacter) => {
+  const fragments = [];
+  const agePhrase = mainCharacter.age ? buildAgePhrase(mainCharacter.age) : '';
+
+  if (mainCharacter.name) {
+    fragments.push(`hero ${mainCharacter.name}`);
+  }
+
+  if (agePhrase) {
+    fragments.push(`age impression ${agePhrase}`);
+  }
+
+  if (mainCharacter.appearance) {
+    fragments.push(`face and body cues ${mainCharacter.appearance}`);
+  }
+
+  if (mainCharacter.description) {
+    fragments.push(`core character notes ${mainCharacter.description}`);
+  }
+
+  if (mainCharacter.clothing) {
+    fragments.push(`signature outfit ${mainCharacter.clothing}`);
+  }
+
+  const coreText = fragments.length > 0 ? fragments.join(', ') : 'validated main character';
+
+  return `VISUAL IDENTITY LOCK: keep the same ${coreText} on every page. Preserve face shape, hairstyle silhouette, hair color, skin tone, age impression, body proportions, and signature outfit details.`;
+};
+
+const buildAgePhrase = (age) => {
+  const cleanedAge = toCleanString(age);
+  if (!cleanedAge) {
+    return '';
+  }
+
+  if (/^\d+$/.test(cleanedAge)) {
+    return `${cleanedAge}-year-old`;
+  }
+
+  if (/^\d+\s*-\s*\d+$/.test(cleanedAge)) {
+    return `${cleanedAge.replace(/\s*/g, '')}-year-old`;
+  }
+
+  return cleanedAge
+    .replace(/\s+/g, '-')
+    .replace(/[^a-z0-9\-]/gi, '')
+    .toLowerCase();
+};
+
+const buildPaletteLine = (palette) => {
+  if (!palette.length) {
+    return '';
+  }
+
+  return `PALETTE LOCK: keep the validated palette dominant across the whole book: ${palette.join(', ')}. Use these tones as the stable color guide and avoid introducing a competing palette.`;
+};
+
+const buildStyleLine = (artStyle) => {
+  if (!artStyle.id && !artStyle.prompt) {
+    return '';
+  }
+
+  const styleLabel = artStyle.prompt || artStyle.id;
+  return `STYLE LOCK: maintain a constant children's-book art direction: ${styleLabel}. Do not drift into a different rendering mode, medium, or level of realism from page to page.`;
+};
+
+const buildSceneGuardLine = () => {
+  return 'SCENE LIMIT: the scene may vary, but only the action, background, framing, and composition may change. The character identity, age impression, hairstyle, outfit, and art style must stay fixed.';
+};
+
+const buildQualityLine = () => {
+  return 'QUALITY RULES: coherent chapter-to-chapter character continuity, no random redesign, no extra unrelated props, no text, no watermark, no logo, no palette chart, and no style drift.';
+};
+
+const buildNegativePrompt = () => {
+  return [
+    'text',
+    'letters',
+    'caption',
+    'watermark',
+    'logo',
+    'signature',
+    'palette chart',
+    'color chart',
+    'different face',
+    'different hairstyle',
+    'different age',
+    'different outfit',
+    'style drift',
+    'semi 3d',
+    'photorealistic',
+    'busy clutter'
+  ].join(', ');
+};
+
 const buildInvariants = ({ mainCharacter, artStyle }) => {
   const invariants = [];
 
@@ -26,12 +160,20 @@ const buildInvariants = ({ mainCharacter, artStyle }) => {
     invariants.push(`Conserver ${mainCharacter.name} avec la meme morphologie et les memes traits.`);
   }
 
+  if (mainCharacter.age) {
+    invariants.push(`Age apparent verrouille: ${mainCharacter.age}.`);
+  }
+
   if (mainCharacter.appearance) {
-    invariants.push(`Apparence cle: ${mainCharacter.appearance}`);
+    invariants.push(`Visage / silhouette cle: ${mainCharacter.appearance}`);
   }
 
   if (mainCharacter.description) {
     invariants.push(`Description cle: ${mainCharacter.description}`);
+  }
+
+  if (mainCharacter.clothing) {
+    invariants.push(`Tenue / silhouette signature: ${mainCharacter.clothing}`);
   }
 
   if (mainCharacter.colorPalette.length > 0) {
@@ -39,19 +181,124 @@ const buildInvariants = ({ mainCharacter, artStyle }) => {
   }
 
   if (artStyle.id || artStyle.prompt) {
-    invariants.push('Le style artistique et la texture doivent rester constants sur tout le livre.');
+    invariants.push('Le style artistique, le rendu et la texture doivent rester constants sur tout le livre.');
   }
 
   return invariants;
 };
 
+export const buildVisualIdentityPromptProfile = (spec = {}) => {
+  const normalizedMainCharacter = {
+    name: toCleanString(spec?.mainCharacter?.name || spec?.character?.name),
+    age: toCleanString(spec?.mainCharacter?.age || spec?.character?.age),
+    appearance: toCleanString(spec?.mainCharacter?.appearance || spec?.character?.appearance),
+    description: toCleanString(spec?.mainCharacter?.description || spec?.character?.description),
+    clothing: toCleanString(spec?.mainCharacter?.clothing || spec?.character?.clothing),
+    referencePrompt: toCleanString(spec?.mainCharacter?.referencePrompt || spec?.referencePrompt),
+    referenceImage: toCleanString(spec?.mainCharacter?.referenceImage || spec?.character?.referenceImage),
+    referenceImagePath: toCleanString(spec?.mainCharacter?.referenceImagePath || spec?.character?.referenceImagePath),
+    colorPalette: normalizePalette(spec?.mainCharacter?.colorPalette || spec?.palette)
+  };
+
+  const artStyle = {
+    id: toCleanString(spec?.artStyle?.id || spec?.artisticStyle),
+    prompt: toCleanString(spec?.artStyle?.prompt || spec?.stylePrompt)
+  };
+
+  const identityHash = stableHash({
+    version: SPEC_VERSION,
+    mainCharacter: {
+      name: normalizedMainCharacter.name,
+      age: normalizedMainCharacter.age,
+      appearance: normalizedMainCharacter.appearance,
+      description: normalizedMainCharacter.description,
+      clothing: normalizedMainCharacter.clothing,
+      referencePrompt: normalizedMainCharacter.referencePrompt,
+      colorPalette: normalizedMainCharacter.colorPalette
+    },
+    artStyle
+  });
+
+  const faceHairAnchors = extractAnchorTokens([
+    normalizedMainCharacter.appearance,
+    normalizedMainCharacter.description,
+    normalizedMainCharacter.referencePrompt
+  ].filter(Boolean).join(' ')).filter(isFaceHairAnchorToken).slice(0, 8);
+
+  const agePhrase = buildAgePhrase(normalizedMainCharacter.age);
+  const ageAnchors = agePhrase ? extractAnchorTokens(`age impression ${agePhrase}`) : [];
+  const clothingAnchors = extractAnchorTokens([
+    normalizedMainCharacter.clothing,
+    normalizedMainCharacter.referencePrompt
+  ].filter(Boolean).join(' '));
+  const styleAnchors = extractAnchorTokens([
+    artStyle.id,
+    artStyle.prompt
+  ].filter(Boolean).join(' '));
+  const paletteAnchors = normalizedMainCharacter.colorPalette.map((color) => toCleanString(color)).filter(Boolean);
+
+  const invariantPrompt = buildCharacterLockLine(normalizedMainCharacter);
+  const stylePrompt = buildStyleLine(artStyle);
+  const palettePrompt = buildPaletteLine(normalizedMainCharacter.colorPalette);
+  const sceneGuardPrompt = buildSceneGuardLine();
+  const qualityPrompt = buildQualityLine();
+  const negativePrompt = buildNegativePrompt();
+
+  return {
+    version: SPEC_VERSION,
+    identityHash,
+    promptOrder: [
+      'invariantPrompt',
+      'stylePrompt',
+      'palettePrompt',
+      'sceneGuardPrompt',
+      'pagePrompt',
+      'scenePrompt',
+      'continuityPrompt',
+      'templatePrompt',
+      'qualityPrompt',
+      'safetyPrompt'
+    ],
+    promptSections: {
+      invariantPrompt,
+      stylePrompt,
+      palettePrompt,
+      sceneGuardPrompt,
+      qualityPrompt,
+      negativePrompt
+    },
+    consistencyAnchors: {
+      faceHair: faceHairAnchors,
+      age: ageAnchors,
+      clothing: clothingAnchors,
+      style: styleAnchors,
+      palette: paletteAnchors
+    },
+    lockedAttributes: {
+      name: normalizedMainCharacter.name,
+      age: normalizedMainCharacter.age,
+      agePhrase,
+      appearance: normalizedMainCharacter.appearance,
+      description: normalizedMainCharacter.description,
+      clothing: normalizedMainCharacter.clothing,
+      referenceImage: normalizedMainCharacter.referenceImage,
+      referenceImagePath: normalizedMainCharacter.referenceImagePath,
+      colorPalette: normalizedMainCharacter.colorPalette,
+      artStyle
+    }
+  };
+};
+
 export const buildVisualIdentitySpec = ({ project, mainCharacterData }) => {
   const mainCharacter = {
     name: toCleanString(mainCharacterData?.name),
+    age: toCleanString(mainCharacterData?.age),
     appearance: toCleanString(mainCharacterData?.appearance),
     description: toCleanString(mainCharacterData?.description),
     clothing: toCleanString(mainCharacterData?.clothing),
     referencePrompt: toCleanString(mainCharacterData?.referencePrompt),
+    referenceImage: toCleanString(mainCharacterData?.referenceImage),
+    referenceImagePath: toCleanString(mainCharacterData?.referenceImagePath),
     colorPalette: normalizePalette(mainCharacterData?.colorPalette)
   };
 
@@ -60,11 +307,17 @@ export const buildVisualIdentitySpec = ({ project, mainCharacterData }) => {
     prompt: toCleanString(project?.visualIdentity?.stylePrompt)
   };
 
+  const promptProfile = buildVisualIdentityPromptProfile({
+    mainCharacter,
+    artStyle
+  });
+
   const spec = {
     version: SPEC_VERSION,
     mainCharacter,
     artStyle,
-    invariants: []
+    invariants: [],
+    promptProfile
   };
 
   spec.invariants = buildInvariants({
@@ -112,6 +365,19 @@ export const validateVisualIdentitySpec = (spec) => {
 
   if (!Array.isArray(spec.invariants) || spec.invariants.length === 0) {
     errors.push('invariants doit contenir au moins une regle.');
+  }
+
+  if (spec.promptProfile && typeof spec.promptProfile === 'object') {
+    const sections = spec.promptProfile.promptSections || {};
+    if (!toCleanString(sections.invariantPrompt)) {
+      errors.push('promptProfile.promptSections.invariantPrompt est requis.');
+    }
+    if (!toCleanString(sections.stylePrompt) && !styleId && !stylePrompt) {
+      errors.push('promptProfile.promptSections.stylePrompt est requis.');
+    }
+    if (!toCleanString(sections.sceneGuardPrompt)) {
+      errors.push('promptProfile.promptSections.sceneGuardPrompt est requis.');
+    }
   }
 
   return {

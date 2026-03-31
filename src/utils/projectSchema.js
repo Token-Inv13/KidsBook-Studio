@@ -134,7 +134,11 @@ export const createProjectImageAsset = (image = {}, pageId = null) => {
     requestId: toNonEmptyString(image.requestId) || null,
     generationStatus: toNonEmptyString(image.generationStatus) || 'ready',
     sourcePageId: toNonEmptyString(image.sourcePageId) || pageId || null,
-    createdAt: toNonEmptyString(image.createdAt || image.selectedAt || image.generatedAt) || null
+    createdAt: toNonEmptyString(image.createdAt || image.selectedAt || image.generatedAt) || null,
+    promptSections: image.promptSections && typeof image.promptSections === 'object' ? image.promptSections : null,
+    promptTrace: image.promptTrace && typeof image.promptTrace === 'object' ? image.promptTrace : null,
+    consistencyProfile: image.consistencyProfile && typeof image.consistencyProfile === 'object' ? image.consistencyProfile : null,
+    identityHash: toNonEmptyString(image.identityHash) || null
   };
 };
 
@@ -186,6 +190,10 @@ const buildImagesIndex = (project) => {
         size: page.generationMeta?.size,
         quality: page.generationMeta?.quality,
         requestId: page.generationMeta?.requestId,
+        promptSections: page.generationMeta?.promptSections,
+        promptTrace: page.generationMeta?.promptTrace,
+        consistencyProfile: page.generationMeta?.consistencyProfile,
+        identityHash: page.generationMeta?.identityHash,
         generationStatus: 'ready',
         createdAt: page.generationMeta?.createdAt || page.illustration?.selectedAt
       }, page.id));

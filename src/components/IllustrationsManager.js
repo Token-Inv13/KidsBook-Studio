@@ -341,6 +341,9 @@ function IllustrationsManager({ onOpenPage, onNavigateToCharacters }) {
     let consistency = { isConsistent: true, score: 1, matchedTokens: [], expectedTokens: [] };
     let negativePromptUsed = '';
     let finalPromptUsed = '';
+    let promptSectionsUsed = null;
+    let promptTraceUsed = null;
+    let consistencyProfileUsed = null;
     let lastBatchError = null;
 
     const generateWithConsistency = async (batchRetryIndex) => {
@@ -353,23 +356,28 @@ function IllustrationsManager({ onOpenPage, onNavigateToCharacters }) {
       let candidateFinalPrompt = '';
 
       for (let consistencyAttempt = 0; consistencyAttempt < maxConsistencyAttempts; consistencyAttempt += 1) {
-        const pageContextText = [
-          pageText,
-          `Direction de scene: ${scene}`,
-          continuityContext,
-          batchRetryIndex > 0 ? batchRetryIdentityLockLine : '',
-          consistencyAttempt > 0 ? `Consistency retry attempt ${consistencyAttempt + 1}/${maxConsistencyAttempts}.` : '',
-          safeMode ? 'Safety mode enabled: child-friendly, fully clothed, no violence, no frightening content.' : ''
-        ].filter(Boolean).join(' ');
-
-        const { prompt: imagePrompt, negativePrompt } = buildIllustrationPrompt({
+        const { prompt: imagePrompt, negativePrompt, promptSections, metadata } = buildIllustrationPrompt({
           spec: currentProject.visualIdentitySpec,
           page,
           template: page.template,
-          pageText: pageContextText
+          pageText,
+          sceneDescription: scene,
+          continuityContext: [
+            continuityContext,
+            batchRetryIndex > 0 ? batchRetryIdentityLockLine : '',
+            consistencyAttempt > 0 ? `Consistency retry attempt ${consistencyAttempt + 1}/${maxConsistencyAttempts}.` : '',
+            safeMode ? 'Safety mode enabled: child-friendly, fully clothed, no violence, no frightening content.' : ''
+          ].filter(Boolean).join(' '),
+          retryForConsistency: batchRetryIndex > 0 || consistencyAttempt > 0,
+          safeMode
         });
         candidateNegativePrompt = negativePrompt;
         candidateFinalPrompt = imagePrompt;
+        promptSectionsUsed = promptSections;
+        promptTraceUsed = metadata?.promptTrace || {
+          identityHash: metadata?.identityHash || null
+        };
+        consistencyProfileUsed = metadata?.consistencyAnchors || null;
 
         let generated;
         try {
@@ -400,6 +408,7 @@ function IllustrationsManager({ onOpenPage, onNavigateToCharacters }) {
         }
 
         candidateConsistency = validateRevisedPromptConsistency(generated.revised_prompt, currentProject.visualIdentity);
+        consistencyProfileUsed = candidateConsistency;
 
         if (!bestCandidate || candidateConsistency.score > bestCandidate.consistency.score) {
           bestCandidate = { generated, consistency: candidateConsistency, prompt: imagePrompt, negativePrompt };
@@ -451,7 +460,10 @@ function IllustrationsManager({ onOpenPage, onNavigateToCharacters }) {
         data: candidateData,
         consistency: candidateConsistency,
         negativePromptUsed: candidateNegativePrompt,
-        finalPromptUsed: candidateFinalPrompt
+        finalPromptUsed: candidateFinalPrompt,
+        promptSectionsUsed,
+        promptTraceUsed,
+        consistencyProfileUsed
       };
     };
 
@@ -462,6 +474,9 @@ function IllustrationsManager({ onOpenPage, onNavigateToCharacters }) {
         consistency = generated.consistency;
         negativePromptUsed = generated.negativePromptUsed;
         finalPromptUsed = generated.finalPromptUsed;
+        promptSectionsUsed = generated.promptSectionsUsed;
+        promptTraceUsed = generated.promptTraceUsed;
+        consistencyProfileUsed = generated.consistencyProfileUsed;
 
         attempts.push({ attempt: batchAttempt, status: 'success' });
         break;
@@ -498,6 +513,10 @@ function IllustrationsManager({ onOpenPage, onNavigateToCharacters }) {
       consistencyAnchorMatchedTokens: consistency.anchorMatchedTokens,
       consistencyAnchorExpectedTokens: consistency.anchorExpectedTokens,
       negativePromptUsed,
+      promptSections: promptSectionsUsed,
+      promptTrace: promptTraceUsed,
+      consistencyProfile: consistencyProfileUsed,
+      identityHash: promptTraceUsed?.identityHash || identityHash || null,
       variantIndex: 0,
       dalleParams,
       batchGenerated: true
@@ -511,8 +530,11 @@ function IllustrationsManager({ onOpenPage, onNavigateToCharacters }) {
       model: data.model || null,
       size: dalleParams.size,
       quality: 'standard',
-      identityHash,
+      identityHash: promptTraceUsed?.identityHash || identityHash || null,
       identityVersion,
+      promptSections: promptSectionsUsed,
+      promptTrace: promptTraceUsed,
+      consistencyProfile: consistencyProfileUsed,
       attempts
     };
 

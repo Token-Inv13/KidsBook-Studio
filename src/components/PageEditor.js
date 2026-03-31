@@ -171,25 +171,33 @@ const PageEditor = ({ pageId }) => {
         let safeMode = false;
         let negativePromptUsed = '';
         let finalPromptUsed = '';
+        let promptSectionsUsed = null;
+        let promptTraceUsed = null;
+        let consistencyProfileUsed = null;
 
         for (let attempt = 0; attempt < maxConsistencyAttempts; attempt += 1) {
-          const pageContextText = [
-            pageText,
-            `Direction de scene: ${scene}`,
-            continuityContext,
-            `Variant ${i + 1} for page ${page.number}.`,
-            attempt > 0 ? `Consistency retry attempt ${attempt + 1}/${maxConsistencyAttempts}.` : '',
-            safeMode ? 'Safety mode enabled: child-friendly, fully clothed, no violence, no frightening content.' : ''
-          ].filter(Boolean).join(' ');
-
-          const { prompt: imagePrompt, negativePrompt } = buildIllustrationPrompt({
+          const { prompt: imagePrompt, negativePrompt, promptSections, metadata } = buildIllustrationPrompt({
             spec: currentProject.visualIdentitySpec,
             page,
             template: page.template,
-            pageText: pageContextText
+            pageText,
+            sceneDescription: scene,
+            continuityContext: [
+              continuityContext,
+              `Variant ${i + 1} for page ${page.number}.`,
+              attempt > 0 ? `Consistency retry attempt ${attempt + 1}/${maxConsistencyAttempts}.` : '',
+              safeMode ? 'Safety mode enabled: child-friendly, fully clothed, no violence, no frightening content.' : ''
+            ].filter(Boolean).join(' '),
+            retryForConsistency: attempt > 0,
+            safeMode
           });
           negativePromptUsed = negativePrompt;
           finalPromptUsed = imagePrompt;
+          promptSectionsUsed = promptSections;
+          promptTraceUsed = metadata?.promptTrace || {
+            identityHash: metadata?.identityHash || null
+          };
+          consistencyProfileUsed = metadata?.consistencyAnchors || null;
 
           let generated;
           try {
@@ -217,6 +225,7 @@ const PageEditor = ({ pageId }) => {
           }
 
           consistency = validateRevisedPromptConsistency(generated.revised_prompt, currentProject.visualIdentity);
+          consistencyProfileUsed = consistency;
 
           if (!bestCandidate || consistency.score > bestCandidate.consistency.score) {
             bestCandidate = { generated, consistency, prompt: imagePrompt };
@@ -268,6 +277,10 @@ const PageEditor = ({ pageId }) => {
           dalleParams,
           negativePromptUsed,
           promptFinal: finalPromptUsed,
+          promptSections: promptSectionsUsed,
+          promptTrace: promptTraceUsed,
+          consistencyProfile: consistencyProfileUsed,
+          identityHash: promptTraceUsed?.identityHash || null,
           consistencyScore: consistency.score,
           consistencyMatchedTokens: consistency.matchedTokens,
           consistencyAnchorRequirementMet: consistency.anchorRequirementMet,
@@ -310,7 +323,11 @@ const PageEditor = ({ pageId }) => {
           model: null,
           size: variant.dalleParams?.size || null,
           quality: variant.dalleParams?.quality || 'standard',
-          status: 'ready'
+          status: 'ready',
+          promptSections: variant.promptSections || null,
+          promptTrace: variant.promptTrace || null,
+          consistencyProfile: variant.consistencyProfile || null,
+          identityHash: variant.identityHash || null
         },
         updateProject
       });

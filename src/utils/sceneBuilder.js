@@ -14,24 +14,22 @@
  * @param {string} params.openaiServiceUrl - URL of OpenAI service
  * @returns {Promise<string>} Visual scene description (2-5 sentences)
  */
-export async function buildSceneDescription({ 
-  pageText, 
-  bookSummary, 
-  characters, 
+export async function buildSceneDescription({
+  pageText,
+  bookSummary,
+  characters,
   targetAge,
-  openaiServiceUrl 
+  openaiServiceUrl
 }) {
   if (!pageText || pageText.trim().length === 0) {
     throw new Error('Page text is required to build a scene description');
   }
 
-  // Build character context
+  // Build character context without fixed visual details
   const characterContext = characters && characters.length > 0
-    ? characters.map(char => {
-        const parts = [`${char.name}`];
-        if (char.age) parts.push(`${char.age} ans`);
-        if (char.description) parts.push(char.description);
-        if (char.appearance) parts.push(char.appearance);
+    ? characters.map((char) => {
+        const parts = [`${char.name || 'Personnage'}`];
+        if (char.role) parts.push(char.role);
         return parts.join(', ');
       }).join('\n')
     : 'Aucun personnage défini';
@@ -42,12 +40,14 @@ Ta mission : transformer le texte d'une page en une description de scène courte
 
 Règles strictes :
 - 2 à 5 phrases maximum
-- Focus sur ce qui doit être VISIBLE (actions, expressions, décor, ambiance)
+- Focus sur ce qui doit être VISIBLE (actions, décor, ambiance, composition)
 - Éviter les concepts abstraits
 - Utiliser un vocabulaire simple adapté à l'âge cible
 - Décrire la composition (premier plan, arrière-plan)
 - Mentionner les couleurs et l'atmosphère si pertinent
-- Être concret et imagé`;
+- Être concret et imagé
+- Ne pas redéfinir l'identité visuelle fixe du personnage principal : pas de nouvelle coiffure, pas de nouveau visage, pas de nouvelle tenue, pas de nouvelle palette
+- Ne pas réinventer le style artistique`;
 
   const userPrompt = `Contexte du livre :
 ${bookSummary || 'Livre pour enfants'}
@@ -60,7 +60,8 @@ ${characterContext}
 Texte de la page :
 "${pageText}"
 
-Génère une description de scène visuelle courte (2-5 phrases) pour cette page.`;
+Génère une description de scène visuelle courte (2-5 phrases) pour cette page.
+Concentre-toi sur l'action, le lieu, l'ambiance et la composition.`;
 
   try {
     const response = await fetch(`${openaiServiceUrl}/api/chat`, {
@@ -82,11 +83,11 @@ Génère une description de scène visuelle courte (2-5 phrases) pour cette page
     }
 
     const data = await response.json();
-    
+
     if (!data.success) {
       throw new Error(data.error || 'Failed to generate scene description');
     }
-    
+
     const sceneDescription = data.content.trim();
 
     return sceneDescription;
@@ -116,7 +117,7 @@ export function validateSceneDescription(sceneDescription) {
     issues.push('Scene description is too long (maximum 1000 characters)');
   }
 
-  const sentences = sceneDescription.split(/[.!?]+/).filter(s => s.trim().length > 0);
+  const sentences = sceneDescription.split(/[.!?]+/).filter((s) => s.trim().length > 0);
   if (sentences.length > 7) {
     issues.push('Scene description has too many sentences (maximum 7)');
   }
@@ -133,7 +134,6 @@ export function validateSceneDescription(sceneDescription) {
  * @returns {Object} Extracted elements (characters, setting, mood, actions)
  */
 export function extractVisualElements(sceneDescription) {
-  // Simple extraction based on common patterns
   const elements = {
     characters: [],
     setting: null,
@@ -141,10 +141,8 @@ export function extractVisualElements(sceneDescription) {
     actions: []
   };
 
-  // This is a simple implementation - could be enhanced with NLP
   const lowerScene = sceneDescription.toLowerCase();
 
-  // Extract mood keywords
   const moodKeywords = ['joyeux', 'triste', 'effrayant', 'magique', 'calme', 'excitant', 'mystérieux'];
   for (const mood of moodKeywords) {
     if (lowerScene.includes(mood)) {
@@ -153,7 +151,6 @@ export function extractVisualElements(sceneDescription) {
     }
   }
 
-  // Extract setting keywords
   const settingKeywords = ['forêt', 'maison', 'jardin', 'école', 'parc', 'plage', 'montagne', 'ville'];
   for (const setting of settingKeywords) {
     if (lowerScene.includes(setting)) {
