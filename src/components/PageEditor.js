@@ -31,7 +31,7 @@ const PageEditor = ({ pageId }) => {
       <div className="flex-1 flex items-center justify-center bg-gray-100">
         <div className="text-center text-gray-400">
           <Type size={64} className="mx-auto mb-4 opacity-50" />
-          <p className="text-lg">SÃ©lectionnez une page pour commencer</p>
+          <p className="text-lg">Sélectionnez une page pour commencer</p>
         </div>
       </div>
     );
@@ -104,7 +104,7 @@ const PageEditor = ({ pageId }) => {
     // Check if page has text
     const pageText = page.textBlocks?.map(b => b.content).join(' ').trim();
     if (!pageText || pageText.length < 10) {
-      setError('La page doit contenir du texte pour gÃ©nÃ©rer une illustration.');
+      setError('La page doit contenir du texte pour générer une illustration.');
       return;
     }
 
@@ -149,7 +149,7 @@ const PageEditor = ({ pageId }) => {
         if (!response.ok) {
           const statusCode = payload.statusCode || response.status;
           const requestId = payload.requestId ? ` [req:${payload.requestId}]` : '';
-          const baseMessage = payload.error || `Erreur lors de la gÃ©nÃ©ration (${statusCode})`;
+          const baseMessage = payload.error || `Erreur lors de la génération (${statusCode})`;
           const transientError = statusCode >= 500 || statusCode === 429;
           const error = new Error(`${baseMessage}${requestId}`);
           error.transient = transientError;
@@ -254,12 +254,12 @@ const PageEditor = ({ pageId }) => {
             (strongAnchorMatch && bestCandidate.consistency.score >= minFallbackConsistencyScoreWithStrongAnchors))
           : false;
 
-        if (!data && bestCandidate && bestCandidate.consistency.anchorRequirementMet && passesFallbackThreshold) {
+        if (!data && bestCandidate && passesFallbackThreshold) {
           data = bestCandidate.generated;
           consistency = bestCandidate.consistency;
           finalPromptUsed = bestCandidate.prompt || finalPromptUsed;
           console.warn(
-            `[PageEditor] Variant ${i + 1}: accepting best candidate (score ${consistency.score.toFixed(2)}).`
+            `[PageEditor] Variant ${i + 1}: accepting best candidate (score ${consistency.score.toFixed(2)}, anchorRequirementMet=${consistency.anchorRequirementMet}).`
           );
         }
 
@@ -290,7 +290,7 @@ const PageEditor = ({ pageId }) => {
       }
 
       if (variants.length === 0) {
-        throw new Error('Aucune variante valide gÃ©nÃ©rÃ©e. Le prompt est probablement bloquÃ© par les filtres de sÃ©curitÃ© ou la cohÃ©rence est insuffisante.');
+        throw new Error('Aucune variante valide générée. Le prompt est probablement bloqué par les filtres de sécurité ou la cohérence est insuffisante.');
       }
 
       setGeneratedVariants(variants);
@@ -407,9 +407,9 @@ const PageEditor = ({ pageId }) => {
               className="flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {page.illustration ? (
-                <><RefreshCw size={16} /> RegÃ©nÃ©rer</>
+                <><RefreshCw size={16} /> Regénérer</>
               ) : (
-                <><Wand2 size={16} /> GÃ©nÃ©rer illustration</>
+                <><Wand2 size={16} /> Générer illustration</>
               )}
             </button>
           )}
@@ -427,8 +427,8 @@ const PageEditor = ({ pageId }) => {
           <div className="flex items-center gap-3">
             <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-600"></div>
             <p className="text-blue-700 text-sm font-medium">
-              {isGeneratingScene && 'CrÃ©ation de la description de scÃ¨ne...'}
-              {isGeneratingVariants && `GÃ©nÃ©ration des variantes (${generatedVariants.length}/4)...`}
+              {isGeneratingScene && 'Création de la description de scène...'}
+              {isGeneratingVariants && `Génération des variantes (${generatedVariants.length}/4)...`}
             </p>
           </div>
         </div>
@@ -514,7 +514,7 @@ const PageEditor = ({ pageId }) => {
           onSelect={handleSelectVariant}
           onClose={() => setShowVariantSelector(false)}
           onRegenerate={handleRegenerateIllustration}
-          title="SÃ©lectionnez une illustration pour cette page"
+          title="Sélectionnez une illustration pour cette page"
           isGenerating={isGeneratingVariants}
         />
       )}

@@ -62,9 +62,11 @@ class IllustrationQueue {
 
       } catch (error) {
         item.attempts++;
-        
-        if (item.attempts < 3) {
-          // Retry up to 3 times
+
+        const retryable = error?.transient === true || error?.retryable === true;
+
+        if (retryable && item.attempts < 3) {
+          // Retry only when the upstream error is explicitly retryable.
           item.status = 'retrying';
           this.notifyProgress();
           await this.delay(2000); // Wait 2 seconds before retry

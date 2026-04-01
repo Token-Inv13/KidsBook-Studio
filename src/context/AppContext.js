@@ -60,9 +60,6 @@ export const AppProvider = ({ children }) => {
         const savedProjects = await writeProjectsToStore(updatedProjects);
 
         setProjects(savedProjects);
-        setCurrentProject((prevProject) =>
-          prevProject?.id === savedProject.id ? savedProject : prevProject
-        );
       } catch (error) {
         console.error('[AppContext] Autosave failed:', error);
       }

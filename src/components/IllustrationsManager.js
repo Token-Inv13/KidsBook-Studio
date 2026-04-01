@@ -120,7 +120,7 @@ function IllustrationsManager({ onOpenPage, onNavigateToCharacters }) {
       setIsProcessing(false);
       setCurrentProcessingPageId(null);
       if (errors.length > 0) {
-        setError(`${errors.length} page(s) ont Ã©chouÃ© lors de la gÃ©nÃ©ration.`);
+        setError(`${errors.length} page(s) ont échoué lors de la génération.`);
       }
     });
 
@@ -174,7 +174,7 @@ function IllustrationsManager({ onOpenPage, onNavigateToCharacters }) {
       setCurrentProcessingPageId(page.id);
       await generateIllustrationForPage(page, 0);
     } catch (regenerateError) {
-      setError(regenerateError.message || `Ã‰chec de rÃ©gÃ©nÃ©ration pour la page ${page.number}`);
+      setError(regenerateError.message || `Échec de régénération pour la page ${page.number}`);
     } finally {
       setCurrentProcessingPageId(null);
     }
@@ -243,13 +243,13 @@ function IllustrationsManager({ onOpenPage, onNavigateToCharacters }) {
   const getStatusText = (status) => {
     switch (status) {
       case 'completed':
-        return 'Illustration gÃ©nÃ©rÃ©e';
+        return 'Illustration générée';
       case 'processing':
-        return 'GÃ©nÃ©ration en cours...';
+        return 'Génération en cours...';
       case 'retrying':
         return 'Nouvelle tentative...';
       case 'failed':
-        return 'Ã‰chec';
+        return 'Échec';
       case 'pending':
         return 'En attente';
       case 'missing':
@@ -282,7 +282,7 @@ function IllustrationsManager({ onOpenPage, onNavigateToCharacters }) {
       .trim();
       
     if (!pageText || pageText.length < 10) {
-      throw new Error(`Page ${page.number} n'a pas assez de texte (minimum 10 caractÃ¨res)`);
+      throw new Error(`Page ${page.number} n'a pas assez de texte (minimum 10 caractères)`);
     }
 
     // Build scene description
@@ -320,7 +320,7 @@ function IllustrationsManager({ onOpenPage, onNavigateToCharacters }) {
       if (!response.ok) {
         const statusCode = payload.statusCode || response.status;
         const requestId = payload.requestId ? ` [req:${payload.requestId}]` : '';
-        const baseMessage = payload.error || `Erreur lors de la gÃ©nÃ©ration (${statusCode})`;
+        const baseMessage = payload.error || `Erreur lors de la génération (${statusCode})`;
         const transientError = statusCode >= 500 || statusCode === 429;
         const error = new Error(`${baseMessage}${requestId}`);
         error.transient = transientError;
@@ -437,7 +437,7 @@ function IllustrationsManager({ onOpenPage, onNavigateToCharacters }) {
           (strongAnchorMatch && bestCandidate.consistency.score >= minFallbackConsistencyScoreWithStrongAnchors))
         : false;
 
-      if (!candidateData && bestCandidate && bestCandidate.consistency.anchorRequirementMet && passesFallbackThreshold) {
+      if (!candidateData && bestCandidate && passesFallbackThreshold) {
         candidateData = bestCandidate.generated;
         candidateConsistency = bestCandidate.consistency;
         candidateFinalPrompt = bestCandidate.prompt || candidateFinalPrompt;
@@ -446,13 +446,13 @@ function IllustrationsManager({ onOpenPage, onNavigateToCharacters }) {
           ? `anchors ${candidateConsistency.anchorMatchedTokens?.length || 0}/${candidateConsistency.anchorExpectedTokens.length}`
           : 'anchors n/a';
         console.warn(
-          `[IllustrationsManager] Accepting best available generation for page ${page.number} despite low consistency score (${candidateConsistency.score.toFixed(2)}, ${anchorDebug}).`
+          `[IllustrationsManager] Accepting best available generation for page ${page.number} despite low consistency score (${candidateConsistency.score.toFixed(2)}, ${anchorDebug}, anchorRequirementMet=${candidateConsistency.anchorRequirementMet}).`
         );
       }
 
       if (!candidateData) {
         throw lastRequestError || new Error(
-          `Aucune image suffisamment cohÃ©rente gÃ©nÃ©rÃ©e pour la page ${page.number} (score minimal requis: ${minFallbackConsistencyScore}, ou ${minFallbackConsistencyScoreWithStrongAnchors} avec anchors forts).`
+          `Aucune image suffisamment cohérente générée pour la page ${page.number} (score minimal requis: ${minFallbackConsistencyScore}, ou ${minFallbackConsistencyScoreWithStrongAnchors} avec anchors forts).`
         );
       }
 
@@ -561,7 +561,7 @@ function IllustrationsManager({ onOpenPage, onNavigateToCharacters }) {
     console.log('[IllustrationsManager] Spec validation result:', specValidation);
     
     if (!specValidation.ok) {
-      const errorMsg = `visualIdentitySpec invalide: ${specValidation.errors.join(' | ') || 'Veuillez d\'abord valider l\'identitÃ© visuelle dans la section Personnages.'}`;
+      const errorMsg = `visualIdentitySpec invalide: ${specValidation.errors.join(' | ') || 'Veuillez d\'abord valider l\'identité visuelle dans la section Personnages.'}`;
       console.error('[IllustrationsManager]', errorMsg);
       setError(errorMsg);
       return;
@@ -581,7 +581,7 @@ function IllustrationsManager({ onOpenPage, onNavigateToCharacters }) {
     });
 
     if (pagesToGenerate.length === 0) {
-      setError('Aucune page Ã  gÃ©nÃ©rer. Toutes les pages ont dÃ©jÃ  des illustrations ou n\'ont pas de texte.');
+      setError('Aucune page à générer. Toutes les pages ont déjà des illustrations ou n\'ont pas de texte.');
       return;
     }
 
@@ -639,7 +639,7 @@ function IllustrationsManager({ onOpenPage, onNavigateToCharacters }) {
         <div className="flex items-center justify-between mb-4">
           <div>
             <h2 className="text-3xl font-bold tracking-tight text-zinc-800">Gestion des illustrations</h2>
-            <p className="text-zinc-600 mt-1">GÃ©nÃ©rez les illustrations pour toutes les pages de votre livre</p>
+            <p className="text-zinc-600 mt-1">Générez les illustrations pour toutes les pages de votre livre</p>
           </div>
 
           <div className="flex gap-3">
@@ -666,7 +666,7 @@ function IllustrationsManager({ onOpenPage, onNavigateToCharacters }) {
                 className="inline-flex items-center gap-2 px-5 py-2.5 bg-rose-600 text-white rounded-xl hover:bg-rose-700 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Wand2 className="w-5 h-5" />
-                GÃ©nÃ©rer toutes les pages manquantes
+                Générer toutes les pages manquantes
               </button>
             )}
 
@@ -676,7 +676,7 @@ function IllustrationsManager({ onOpenPage, onNavigateToCharacters }) {
                 className="inline-flex items-center gap-2 px-5 py-2.5 bg-zinc-600 text-white rounded-xl hover:bg-zinc-700 transition-colors shadow-sm"
               >
                 <RotateCcw className="w-5 h-5" />
-                RÃ©initialiser
+                Réinitialiser
               </button>
             )}
           </div>
@@ -690,7 +690,7 @@ function IllustrationsManager({ onOpenPage, onNavigateToCharacters }) {
           </div>
           <div className="bg-emerald-50 rounded-xl p-4 border border-emerald-200">
             <div className="text-3xl font-bold text-emerald-600">{stats.completed}</div>
-            <div className="text-sm text-zinc-600">Illustrations gÃ©nÃ©rÃ©es</div>
+            <div className="text-sm text-zinc-600">Illustrations générées</div>
           </div>
           <div className="bg-amber-50 rounded-xl p-4 border border-amber-200">
             <div className="text-3xl font-bold text-amber-600">{stats.missing}</div>
@@ -769,7 +769,7 @@ function IllustrationsManager({ onOpenPage, onNavigateToCharacters }) {
                   Statut
                 </th>
                 <th className="w-[110px] px-4 py-3 text-left text-xs font-medium text-zinc-500 uppercase tracking-wider">
-                  AperÃ§u
+                  Aperçu
                 </th>
                 <th className="w-[290px] px-4 py-3 text-left text-xs font-medium text-zinc-500 uppercase tracking-wider">
                   Actions
@@ -795,7 +795,7 @@ function IllustrationsManager({ onOpenPage, onNavigateToCharacters }) {
                       <div className="text-sm font-medium text-gray-900">Page {page.number}</div>
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap align-top">
-                      <span className="text-sm text-gray-600">{page.template || 'Non dÃ©fini'}</span>
+                      <span className="text-sm text-gray-600">{page.template || 'Non défini'}</span>
                     </td>
                     <td className="px-4 py-3 align-top">
                       <div className="text-sm text-gray-600 truncate">
@@ -832,7 +832,7 @@ function IllustrationsManager({ onOpenPage, onNavigateToCharacters }) {
                           className="inline-flex items-center gap-1 px-3 py-1.5 text-xs border border-indigo-300 text-indigo-700 rounded-md hover:bg-indigo-50 disabled:opacity-50 disabled:cursor-not-allowed"
                           data-testid={`regenerate-page-${page.number}`}
                         >
-                          <RefreshCw className="w-3.5 h-3.5" /> RegÃ©nÃ©rer
+                          <RefreshCw className="w-3.5 h-3.5" /> Regénérer
                         </button>
                         <button
                           onClick={() => handleViewVariants(page)}
@@ -909,7 +909,7 @@ function IllustrationsManager({ onOpenPage, onNavigateToCharacters }) {
             setCurrentVariants([]);
             setCurrentPage(null);
           }}
-          title={`SÃ©lectionnez une illustration pour la page ${currentPage?.number}`}
+          title={`Sélectionnez une illustration pour la page ${currentPage?.number}`}
         />
       )}
 
@@ -979,5 +979,4 @@ function IllustrationsManager({ onOpenPage, onNavigateToCharacters }) {
 }
 
 export default IllustrationsManager;
-
 
