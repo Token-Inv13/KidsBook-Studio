@@ -1,0 +1,50 @@
+/** @jest-environment node */
+
+import {
+  rankIllustrationVariants,
+  selectBestIllustrationVariant
+} from './illustrationAutoPipeline';
+
+describe('illustrationAutoPipeline', () => {
+  test('prioritizes consistent variants with fewer parasite artifacts', () => {
+    const variants = [
+      {
+        url: 'https://example.com/variant-1.png',
+        variantIndex: 0,
+        consistencyScore: 0.92,
+        isConsistent: true,
+        detectedNonNarrativeArtifacts: [{ key: 'gridLayout' }],
+        consistencyMatchedTokens: ['mia', 'hair'],
+        consistencyAnchorRequirementMet: true
+      },
+      {
+        url: 'https://example.com/variant-2.png',
+        variantIndex: 1,
+        consistencyScore: 0.88,
+        isConsistent: true,
+        detectedNonNarrativeArtifacts: [],
+        consistencyMatchedTokens: ['mia', 'hair', 'raincoat'],
+        consistencyAnchorRequirementMet: true
+      },
+      {
+        url: 'https://example.com/variant-3.png',
+        variantIndex: 2,
+        consistencyScore: 0.97,
+        isConsistent: false,
+        detectedNonNarrativeArtifacts: [],
+        consistencyMatchedTokens: ['mia'],
+        consistencyAnchorRequirementMet: false
+      }
+    ];
+
+    const ranked = rankIllustrationVariants(variants);
+
+    expect(ranked[0].url).toBe('https://example.com/variant-2.png');
+    expect(ranked[1].url).toBe('https://example.com/variant-1.png');
+    expect(ranked[2].url).toBe('https://example.com/variant-3.png');
+  });
+
+  test('returns null when no candidate is available', () => {
+    expect(selectBestIllustrationVariant([])).toBeNull();
+  });
+});

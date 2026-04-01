@@ -12,14 +12,21 @@ describe('illustrationPersistence', () => {
       sourceUrl: 'https://example.com/generated.png',
       variant: {
         revised_prompt: 'prompt revise',
-        dalleParams: { size: '1024x1024' }
+        dalleParams: { size: '1024x1024' },
+        variants: [
+          { url: 'https://example.com/generated.png', consistencyScore: 0.81 },
+          { url: 'https://example.com/generated-2.png', consistencyScore: 0.76 }
+        ],
+        autoSelected: true
       },
       generationMeta: {
         promptFinal: 'prompt final',
         model: 'dall-e-3',
         size: '1024x1024',
         quality: 'standard',
-        requestId: 'req_123'
+        requestId: 'req_123',
+        selectionMode: 'auto-best-result',
+        autoSelectedVariantIndex: 0
       },
       timestamp: '2026-03-09T12:00:00.000Z'
     });
@@ -29,6 +36,9 @@ describe('illustrationPersistence', () => {
     expect(imageAsset.promptFinal).toBe('prompt final');
     expect(illustration.assetId).toBe('page-illustration:page-1');
     expect(illustration.url).toBe('file:///tmp/page_1.png');
+    expect(illustration.selectionMode).toBe('auto-best-result');
+    expect(illustration.autoSelected).toBe(true);
+    expect(illustration.variants).toHaveLength(2);
   });
 
   test('downloads, validates and atomically associates a remote illustration to the page and image registry', async () => {

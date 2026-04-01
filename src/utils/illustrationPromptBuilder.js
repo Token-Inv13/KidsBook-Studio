@@ -1,5 +1,54 @@
 import { buildVisualIdentityPromptProfile } from './visualIdentitySpec';
 
+const GLOBAL_NEGATIVE_CONSTRAINTS = [
+  'No color palette panel',
+  'No UI elements',
+  'No design sheet',
+  'No reference board',
+  'No multiple character variations in the same image',
+  'No layout or concept art presentation'
+];
+
+const FINAL_ILLUSTRATION_RULE = 'The image must look like a final children\'s book illustration, not a concept sheet or design board.';
+
+const NON_NARRATIVE_ARTIFACT_PATTERNS = [
+  {
+    key: 'colorPalettePanel',
+    label: 'color palette panel',
+    pattern: /\b(color palette panel|palette panel|palette chart|color chart|swatch(?:es)?|color swatches?)\b/i
+  },
+  {
+    key: 'uiElements',
+    label: 'UI elements',
+    pattern: /\b(ui elements?|user interface|interface overlay|toolbar|sidebar|hud|app screen|menu screen)\b/i
+  },
+  {
+    key: 'designSheet',
+    label: 'design sheet',
+    pattern: /\b(design sheet|character sheet|model sheet|concept sheet)\b/i
+  },
+  {
+    key: 'referenceBoard',
+    label: 'reference board',
+    pattern: /\b(reference board|mood board|inspiration board)\b/i
+  },
+  {
+    key: 'gridLayout',
+    label: 'grid layout',
+    pattern: /\b(grid|grid layout|panel grid|layout grid)\b/i
+  },
+  {
+    key: 'multipleCharacterVariations',
+    label: 'multiple character variations',
+    pattern: /\b(multiple character variations?|character variations?|character lineup|turnaround sheet|pose sheet|multiple poses)\b/i
+  },
+  {
+    key: 'conceptPresentation',
+    label: 'layout or concept art presentation',
+    pattern: /\b(layout presentation|layout board|concept art presentation|concept board)\b/i
+  }
+];
+
 const toCleanString = (value) => {
   if (typeof value !== 'string') {
     return '';
@@ -74,6 +123,23 @@ const combinePromptSections = (sections) => {
     .map((section) => toCleanString(section))
     .filter(Boolean)
     .join('\n\n');
+};
+
+const combineNegativePromptSections = (sections) => {
+  const entries = sections
+    .flatMap((section) => toCleanString(section).split(','))
+    .map((entry) => toCleanString(entry))
+    .filter(Boolean);
+
+  return [...new Set(entries)].join(', ');
+};
+
+const buildFinalIllustrationLine = () => {
+  return `FINAL ILLUSTRATION RULE: ${FINAL_ILLUSTRATION_RULE}`;
+};
+
+const buildGlobalNegativeConstraintLine = () => {
+  return `GLOBAL NEGATIVE CONSTRAINTS: ${GLOBAL_NEGATIVE_CONSTRAINTS.join('; ')}.`;
 };
 
 const toTokenSet = (value) => {
@@ -158,6 +224,33 @@ const getPaletteTokens = (visualIdentity) => {
     : [];
 };
 
+const detectNonNarrativeArtifactPatterns = (value) => {
+  const normalized = toCleanString(value)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+
+  if (!normalized) {
+    return [];
+  }
+
+  return NON_NARRATIVE_ARTIFACT_PATTERNS.reduce((matches, rule) => {
+    const matched = normalized.match(rule.pattern);
+
+    if (!matched) {
+      return matches;
+    }
+
+    return [
+      ...matches,
+      {
+        key: rule.key,
+        label: rule.label,
+        match: matched[0]
+      }
+    ];
+  }, []);
+};
+
 export const buildIllustrationPrompt = ({
   spec,
   page,
@@ -181,6 +274,24 @@ export const buildIllustrationPrompt = ({
   const continuityLine = buildContinuityLine(continuityContext, retryForConsistency);
   const referenceLine = buildReferenceLockLine(mainCharacter);
   const safetyLine = buildSafetyLine(safeMode);
+  const finalIllustrationPrompt = buildFinalIllustrationLine();
+  const negativeConstraintPrompt = buildGlobalNegativeConstraintLine();
+  const promptOrder = [
+    'invariantPrompt',
+    'referencePrompt',
+    'stylePrompt',
+    'palettePrompt',
+    'sceneGuardPrompt',
+    'pagePrompt',
+    'scenePrompt',
+    'continuityPrompt',
+    'templatePrompt',
+    'additionalPrompt',
+    'finalIllustrationPrompt',
+    'negativeConstraintPrompt',
+    'qualityPrompt',
+    'safetyPrompt'
+  ];
 
   const promptSections = {
     invariantPrompt: profile.promptSections?.invariantPrompt || '',
@@ -192,10 +303,15 @@ export const buildIllustrationPrompt = ({
     scenePrompt: sceneText ? `SCENE DIRECTION: ${sceneText}` : '',
     continuityPrompt: continuityLine,
     templatePrompt: templateInstructions,
+    finalIllustrationPrompt,
+    negativeConstraintPrompt,
     qualityPrompt: profile.promptSections?.qualityPrompt || '',
     safetyPrompt: safetyLine,
     additionalPrompt: additionalContext ? `ADDITIONAL CONTEXT: ${toShortText(additionalContext, 500)}` : '',
-    negativePrompt: profile.promptSections?.negativePrompt || ''
+    negativePrompt: combineNegativePromptSections([
+      profile.promptSections?.negativePrompt || '',
+      GLOBAL_NEGATIVE_CONSTRAINTS.join(', ')
+    ])
   };
 
   const prompt = combinePromptSections([
@@ -209,6 +325,8 @@ export const buildIllustrationPrompt = ({
     promptSections.continuityPrompt,
     promptSections.templatePrompt,
     promptSections.additionalPrompt,
+    promptSections.finalIllustrationPrompt,
+    promptSections.negativeConstraintPrompt,
     promptSections.qualityPrompt,
     promptSections.safetyPrompt
   ]);
@@ -236,13 +354,13 @@ export const buildIllustrationPrompt = ({
       generatedAt: new Date().toISOString(),
       identityHash: profile.identityHash,
       promptSections,
-      promptOrder: profile.promptOrder,
+      promptOrder,
       consistencyAnchors: profile.consistencyAnchors,
       promptTrace: {
         identityHash: profile.identityHash,
         pageNumber: page?.number || null,
         template: template || page?.template || null,
-        sectionOrder: profile.promptOrder,
+        sectionOrder: promptOrder,
         referenceImageId: profile.lockedAttributes?.referenceImageId || spec.mainCharacter?.referenceImageId || null,
         referenceImagePath: profile.lockedAttributes?.referenceImagePath || spec.mainCharacter?.referenceImagePath || null,
         source: 'illustrationPromptBuilder'
@@ -265,6 +383,8 @@ export const validateRevisedPromptConsistency = (input, visualIdentity) => {
     anchorExpectedTokens: [],
     matchedTokens: [],
     expectedTokens: [],
+    detectedNonNarrativeArtifacts: [],
+    inconsistencyReasons: [],
     groupScores: {},
     flags: {}
   };
@@ -306,9 +426,14 @@ export const validateRevisedPromptConsistency = (input, visualIdentity) => {
     referenceLock: 0.05
   };
 
-  const score = Object.entries(groupScores).reduce((sum, [group, result]) => {
+  const rawScore = Object.entries(groupScores).reduce((sum, [group, result]) => {
     return sum + ((result.score || 0) * weights[group]);
   }, 0);
+  const detectedNonNarrativeArtifacts = detectNonNarrativeArtifactPatterns(revisedPrompt);
+  const hasNonNarrativeArtifacts = detectedNonNarrativeArtifacts.length > 0;
+  const score = hasNonNarrativeArtifacts
+    ? Math.min(rawScore, 0.1)
+    : rawScore;
 
   const anchorExpectedTokens = [
     ...profile.consistencyAnchors?.faceHair || [],
@@ -328,6 +453,8 @@ export const validateRevisedPromptConsistency = (input, visualIdentity) => {
     styleStable: styleTokens.length === 0 || groupScores.style.score >= 0.25,
     paletteAdherence: paletteTokens.length === 0 || groupScores.palette.score >= 0.35,
     paletteStable: paletteTokens.length === 0 || groupScores.palette.score >= 0.35,
+    finalIllustrationPresentation: !hasNonNarrativeArtifacts,
+    parasiteElementsDetected: hasNonNarrativeArtifacts,
     referenceLockPresent: referenceConfigured,
     characterNameStable: identityTokens.nameTokens.length === 0 || groupScores.name.score >= 0.5
   };
@@ -341,15 +468,24 @@ export const validateRevisedPromptConsistency = (input, visualIdentity) => {
     ...paletteTokens
   ];
   const combinedMatchedTokens = combinedExpectedTokens.filter((token) => revisedTokenSet.includes(token));
+  const inconsistencyReasons = detectedNonNarrativeArtifacts.map((artifact) => {
+    return `Detected ${artifact.label} pattern in revised prompt: "${artifact.match}"`;
+  });
 
   return {
-    isConsistent: score >= 0.55 && flags.faceSimilarityProxy && flags.styleAdherence && flags.paletteAdherence,
+    isConsistent: score >= 0.55
+      && flags.faceSimilarityProxy
+      && flags.styleAdherence
+      && flags.paletteAdherence
+      && flags.finalIllustrationPresentation,
     score,
     anchorRequirementMet,
     anchorMatchedTokens,
     anchorExpectedTokens,
     matchedTokens: combinedMatchedTokens,
     expectedTokens: combinedExpectedTokens,
+    detectedNonNarrativeArtifacts,
+    inconsistencyReasons,
     groupScores,
     flags,
     identityHash: profile.identityHash

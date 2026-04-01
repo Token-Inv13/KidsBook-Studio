@@ -45,8 +45,13 @@ describe('illustrationPromptBuilder', () => {
     expect(result.prompt).toContain('PALETTE LOCK');
     expect(result.prompt).toContain('SCENE DIRECTION');
     expect(result.prompt).toContain('PAGE NARRATIVE');
+    expect(result.prompt).toContain('FINAL ILLUSTRATION RULE');
+    expect(result.prompt).toContain('The image must look like a final children\'s book illustration, not a concept sheet or design board.');
+    expect(result.prompt).toContain('GLOBAL NEGATIVE CONSTRAINTS');
     expect(result.prompt.indexOf('VISUAL IDENTITY LOCK')).toBeLessThan(result.prompt.indexOf('SCENE DIRECTION'));
     expect(result.negativePrompt).toContain('different face');
+    expect(result.negativePrompt).toContain('No color palette panel');
+    expect(result.negativePrompt).toContain('No UI elements');
     expect(result.metadata.identityHash).toMatch(/^[0-9a-f]{8}$/);
     expect(result.metadata.promptTrace.pageNumber).toBe(4);
     expect(result.metadata.promptTrace.referenceImagePath).toBe('/tmp/reference.png');
@@ -86,5 +91,30 @@ describe('illustrationPromptBuilder', () => {
     expect(result.isConsistent).toBe(false);
     expect(result.flags.styleStable).toBe(false);
     expect(result.score).toBeLessThan(0.55);
+  });
+
+  test('validateRevisedPromptConsistency flags non-narrative design-board artifacts as inconsistent', () => {
+    const result = validateRevisedPromptConsistency(
+      {
+        revisedPrompt: 'Mia round face freckles brown bob haircut yellow raincoat soft watercolor illustration with a palette chart, character sheet grid, and UI elements',
+        prompt: 'REFERENCE LOCK: use the selected visual identity image as the canonical visual anchor for every page.'
+      },
+      {
+        ...spec,
+        mainCharacter: spec.mainCharacter,
+        artStyle: spec.artStyle
+      }
+    );
+
+    expect(result.isConsistent).toBe(false);
+    expect(result.flags.finalIllustrationPresentation).toBe(false);
+    expect(result.flags.parasiteElementsDetected).toBe(true);
+    expect(result.detectedNonNarrativeArtifacts.map((artifact) => artifact.key)).toEqual(expect.arrayContaining([
+      'colorPalettePanel',
+      'designSheet',
+      'gridLayout',
+      'uiElements'
+    ]));
+    expect(result.score).toBeLessThanOrEqual(0.1);
   });
 });

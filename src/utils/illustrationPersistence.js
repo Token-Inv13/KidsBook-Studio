@@ -43,6 +43,19 @@ const upsertProjectImage = (images = [], nextImage) => {
   return [...filtered, nextImage];
 };
 
+const normalizeStoredVariants = (variants = []) => {
+  if (!Array.isArray(variants)) {
+    return [];
+  }
+
+  return variants
+    .filter((variant) => variant && typeof variant === 'object' && typeof variant.url === 'string' && variant.url.trim())
+    .map((variant, index) => ({
+      ...variant,
+      variantIndex: Number.isInteger(variant.variantIndex) ? variant.variantIndex : index
+    }));
+};
+
 export const buildIllustrationSelectionState = ({
   page,
   localFileUrl,
@@ -54,6 +67,9 @@ export const buildIllustrationSelectionState = ({
 }) => {
   const assetId = `${PAGE_ILLUSTRATION_ROLE}:${page.id}`;
   const selectedAt = timestamp;
+  const storedVariants = normalizeStoredVariants(
+    variant?.variants || variant?.allVariants || generationMeta?.variants || []
+  );
 
   const imageAsset = createProjectImageAsset({
     id: assetId,
@@ -98,6 +114,13 @@ export const buildIllustrationSelectionState = ({
     consistencyAnchorExpectedTokens: Array.isArray(variant?.consistencyAnchorExpectedTokens) ? variant.consistencyAnchorExpectedTokens : [],
     negativePromptUsed: variant?.negativePromptUsed || null,
     batchGenerated: Boolean(variant?.batchGenerated),
+    autoSelected: Boolean(variant?.autoSelected ?? generationMeta?.autoSelected),
+    selectionMode: generationMeta?.selectionMode || variant?.selectionMode || null,
+    autoSelectedVariantIndex: Number.isInteger(generationMeta?.autoSelectedVariantIndex)
+      ? generationMeta.autoSelectedVariantIndex
+      : (Number.isInteger(variant?.autoSelectedVariantIndex) ? variant.autoSelectedVariantIndex : null),
+    variants: storedVariants,
+    allVariants: storedVariants,
     promptSections: variant?.promptSections || null,
     promptTrace: variant?.promptTrace || null,
     consistencyProfile: variant?.consistencyProfile || null,
@@ -145,6 +168,9 @@ export async function finalizePageIllustrationSelection({
   }
 
   await validateDownloadedImageFile(localPath, bridge);
+  const storedVariants = normalizeStoredVariants(
+    variant?.variants || variant?.allVariants || generationMeta?.variants || []
+  );
 
   const localFileUrl = toFileUrl(localPath);
   const { imageAsset, illustration } = buildIllustrationSelectionState({
@@ -165,6 +191,12 @@ export async function finalizePageIllustrationSelection({
     createdAt: generationMeta?.createdAt || timestamp,
     updatedAt: timestamp,
     status: 'ready',
+    variants: storedVariants,
+    selectionMode: generationMeta?.selectionMode || variant?.selectionMode || null,
+    autoSelected: Boolean(generationMeta?.autoSelected ?? variant?.autoSelected),
+    autoSelectedVariantIndex: Number.isInteger(generationMeta?.autoSelectedVariantIndex)
+      ? generationMeta.autoSelectedVariantIndex
+      : (Number.isInteger(variant?.autoSelectedVariantIndex) ? variant.autoSelectedVariantIndex : null),
     promptSections: generationMeta?.promptSections || variant?.promptSections || null,
     promptTrace: generationMeta?.promptTrace || variant?.promptTrace || null,
     consistencyProfile: generationMeta?.consistencyProfile || variant?.consistencyProfile || null,

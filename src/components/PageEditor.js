@@ -5,9 +5,13 @@ import { v4 as uuidv4 } from 'uuid';
 import { validateRevisedPromptConsistency } from '../utils/imagePromptBuilder';
 import { buildSceneDescription } from '../utils/sceneBuilder';
 import { getRecommendedDalleParams } from '../utils/imageRatioCalculator';
-import ImageVariantSelector from './ImageVariantSelector';
 import { resolvePageImageUrl } from '../utils/imageUrlResolver';
 import { buildIllustrationPrompt } from '../utils/illustrationPromptBuilder';
+import {
+  AUTO_BEST_RESULT_MAX_CONSISTENCY_ATTEMPTS,
+  AUTO_BEST_RESULT_VARIANT_COUNT,
+  selectBestIllustrationVariant
+} from '../utils/illustrationAutoPipeline';
 import { validateVisualIdentitySpec } from '../utils/visualIdentitySpec';
 import { finalizePageIllustrationSelection } from '../utils/illustrationPersistence';
 
@@ -17,9 +21,7 @@ const PageEditor = ({ pageId }) => {
   const [selectedBlock, setSelectedBlock] = useState(null);
   const [isGeneratingScene, setIsGeneratingScene] = useState(false);
   const [isGeneratingVariants, setIsGeneratingVariants] = useState(false);
-  const [showVariantSelector, setShowVariantSelector] = useState(false);
-  const [generatedVariants, setGeneratedVariants] = useState([]);
-  const [sceneDescription, setSceneDescription] = useState('');
+  const [, setSceneDescription] = useState('');
   const [error, setError] = useState(null);
 
   const page = currentProject?.pages?.find(p => p.id === pageId);
@@ -91,6 +93,49 @@ const PageEditor = ({ pageId }) => {
     setSelectedBlock(null);
   };
 
+  const persistIllustrationVariant = async (variant, allVariants = []) => {
+    const storedVariants = allVariants.map((candidate, index) => ({
+      ...candidate,
+      variantIndex: Number.isInteger(candidate?.variantIndex) ? candidate.variantIndex : index
+    }));
+    const selectedVariantIndex = storedVariants.findIndex((candidate) => candidate.url === variant.url);
+
+    await finalizePageIllustrationSelection({
+      currentProject,
+      page,
+      variant: {
+        ...variant,
+        variantIndex: selectedVariantIndex >= 0 ? selectedVariantIndex : 0,
+        batchGenerated: false,
+        autoSelected: true,
+        autoSelectedVariantIndex: selectedVariantIndex >= 0 ? selectedVariantIndex : 0,
+        selectionMode: 'auto-best-result',
+        variants: storedVariants,
+        allVariants: storedVariants
+      },
+      generationMeta: {
+        requestId: variant.requestId || null,
+        promptFinal: variant.promptFinal || null,
+        revisedPrompt: variant.revised_prompt || '',
+        createdAt: variant.generatedAt || new Date().toISOString(),
+        model: null,
+        size: variant.dalleParams?.size || null,
+        quality: variant.dalleParams?.quality || 'standard',
+        status: 'ready',
+        referenceImageId: variant.referenceImageId || currentProject.visualIdentitySpec?.mainCharacter?.referenceImageId || 'main-character-reference',
+        promptSections: variant.promptSections || null,
+        promptTrace: variant.promptTrace || null,
+        consistencyProfile: variant.consistencyProfile || null,
+        identityHash: variant.identityHash || null,
+        variants: storedVariants,
+        selectionMode: 'auto-best-result',
+        autoSelected: true,
+        autoSelectedVariantIndex: selectedVariantIndex >= 0 ? selectedVariantIndex : 0
+      },
+      updateProject
+    });
+  };
+
   const handleGenerateIllustration = async () => {
     setError(null);
     
@@ -121,7 +166,7 @@ const PageEditor = ({ pageId }) => {
       setSceneDescription(scene);
       setIsGeneratingScene(false);
 
-      // Step 2: Generate variants (4 images)
+      // Step 2: Generate variants internally and auto-select the best result
       setIsGeneratingVariants(true);
       const variants = [];
       const dalleParams = getRecommendedDalleParams(page, currentProject.bookFormat || currentProject.format || '8x10');
@@ -166,10 +211,10 @@ const PageEditor = ({ pageId }) => {
       const minFallbackConsistencyScore = 0.35;
       const minFallbackConsistencyScoreWithStrongAnchors = 0.18;
 
-      for (let i = 0; i < 4; i++) {
+      for (let i = 0; i < AUTO_BEST_RESULT_VARIANT_COUNT; i++) {
         let data = null;
         let consistency = { isConsistent: true, score: 1, matchedTokens: [], expectedTokens: [] };
-        const maxConsistencyAttempts = 1;
+        const maxConsistencyAttempts = AUTO_BEST_RESULT_MAX_CONSISTENCY_ATTEMPTS;
         let bestCandidate = null;
         let safeMode = false;
         let negativePromptUsed = '';
@@ -278,6 +323,7 @@ const PageEditor = ({ pageId }) => {
 
         variants.push({
           url: data.url,
+          variantIndex: i,
           requestId: data.requestId || null,
           revised_prompt: data.revised_prompt,
           referenceImageId: data.referenceImageId || currentProject.visualIdentitySpec?.mainCharacter?.referenceImageId || 'main-character-reference',
@@ -290,11 +336,14 @@ const PageEditor = ({ pageId }) => {
           promptTrace: promptTraceUsed,
           consistencyProfile: consistencyProfileUsed,
           identityHash: promptTraceUsed?.identityHash || null,
+          isConsistent: consistency.isConsistent,
           consistencyScore: consistency.score,
           consistencyMatchedTokens: consistency.matchedTokens,
           consistencyAnchorRequirementMet: consistency.anchorRequirementMet,
           consistencyAnchorMatchedTokens: consistency.anchorMatchedTokens,
-          consistencyAnchorExpectedTokens: consistency.anchorExpectedTokens
+          consistencyAnchorExpectedTokens: consistency.anchorExpectedTokens,
+          detectedNonNarrativeArtifacts: consistency.detectedNonNarrativeArtifacts || [],
+          inconsistencyReasons: consistency.inconsistencyReasons || []
         });
       }
 
@@ -302,9 +351,14 @@ const PageEditor = ({ pageId }) => {
         throw new Error('Aucune variante valide générée. Le prompt est probablement bloqué par les filtres de sécurité ou la cohérence est insuffisante.');
       }
 
-      setGeneratedVariants(variants);
+      const bestVariant = selectBestIllustrationVariant(variants);
+      if (!bestVariant) {
+        throw new Error('Impossible de sélectionner automatiquement une illustration exploitable.');
+      }
+
+      await persistIllustrationVariant(bestVariant, variants);
       setIsGeneratingVariants(false);
-      setShowVariantSelector(true);
+      setSceneDescription('');
 
     } catch (err) {
       console.error('Illustration generation error:', err);
@@ -314,45 +368,7 @@ const PageEditor = ({ pageId }) => {
     }
   };
 
-  const handleSelectVariant = async (variant, index) => {
-    try {
-      await finalizePageIllustrationSelection({
-        currentProject,
-        page,
-        variant: {
-          ...variant,
-          variantIndex: index,
-          batchGenerated: false
-        },
-          generationMeta: {
-            requestId: variant.requestId || null,
-            promptFinal: variant.promptFinal || null,
-            revisedPrompt: variant.revised_prompt || '',
-            createdAt: variant.generatedAt || new Date().toISOString(),
-            model: null,
-            size: variant.dalleParams?.size || null,
-            quality: variant.dalleParams?.quality || 'standard',
-            status: 'ready',
-            referenceImageId: variant.referenceImageId || currentProject.visualIdentitySpec?.mainCharacter?.referenceImageId || 'main-character-reference',
-            promptSections: variant.promptSections || null,
-            promptTrace: variant.promptTrace || null,
-            consistencyProfile: variant.consistencyProfile || null,
-          identityHash: variant.identityHash || null
-        },
-        updateProject
-      });
-      setShowVariantSelector(false);
-      setGeneratedVariants([]);
-      setSceneDescription('');
-    } catch (err) {
-      console.error('Error saving illustration:', err);
-      setError(err.message);
-    }
-  };
-
   const handleRegenerateIllustration = () => {
-    setShowVariantSelector(false);
-    setGeneratedVariants([]);
     handleGenerateIllustration();
   };
 
@@ -438,7 +454,7 @@ const PageEditor = ({ pageId }) => {
             <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-600"></div>
             <p className="text-blue-700 text-sm font-medium">
               {isGeneratingScene && 'Création de la description de scène...'}
-              {isGeneratingVariants && `Génération des variantes (${generatedVariants.length}/4)...`}
+              {isGeneratingVariants && 'Génération automatique, contrôle de cohérence et sélection du meilleur résultat...'}
             </p>
           </div>
         </div>
@@ -517,17 +533,6 @@ const PageEditor = ({ pageId }) => {
           ))}
         </div>
       </div>
-
-      {showVariantSelector && (
-        <ImageVariantSelector
-          variants={generatedVariants}
-          onSelect={handleSelectVariant}
-          onClose={() => setShowVariantSelector(false)}
-          onRegenerate={handleRegenerateIllustration}
-          title="Sélectionnez une illustration pour cette page"
-          isGenerating={isGeneratingVariants}
-        />
-      )}
 
       {selectedBlockData && (
         <div className="bg-white border-t border-gray-200 p-4">

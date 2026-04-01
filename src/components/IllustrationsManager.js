@@ -9,6 +9,10 @@ import ImageVariantSelector from './ImageVariantSelector';
 import { resolvePageImageUrl } from '../utils/imageUrlResolver';
 import { getDynamicTableHeight, getVirtualWindow, shouldUseVirtualization } from '../utils/illustrationsListLayout';
 import { buildIllustrationPrompt } from '../utils/illustrationPromptBuilder';
+import {
+  AUTO_BEST_RESULT_MAX_BATCH_RETRIES,
+  AUTO_BEST_RESULT_MAX_CONSISTENCY_ATTEMPTS
+} from '../utils/illustrationAutoPipeline';
 import { validateVisualIdentitySpec } from '../utils/visualIdentitySpec';
 import { stableHash } from '../utils/hash';
 import { finalizePageIllustrationSelection } from '../utils/illustrationPersistence';
@@ -334,8 +338,8 @@ function IllustrationsManager({ onOpenPage, onNavigateToCharacters }) {
       return payload;
     };
 
-    const maxBatchRetries = 0;
-    const maxConsistencyAttempts = 1;
+    const maxBatchRetries = AUTO_BEST_RESULT_MAX_BATCH_RETRIES;
+    const maxConsistencyAttempts = AUTO_BEST_RESULT_MAX_CONSISTENCY_ATTEMPTS;
     const minFallbackConsistencyScore = 0.35;
     const minFallbackConsistencyScoreWithStrongAnchors = 0.18;
     const attempts = [];
@@ -526,9 +530,15 @@ function IllustrationsManager({ onOpenPage, onNavigateToCharacters }) {
       promptTrace: promptTraceUsed,
       consistencyProfile: consistencyProfileUsed,
       identityHash: promptTraceUsed?.identityHash || identityHash || null,
+      isConsistent: consistency.isConsistent,
+      detectedNonNarrativeArtifacts: consistency.detectedNonNarrativeArtifacts || [],
+      inconsistencyReasons: consistency.inconsistencyReasons || [],
       variantIndex: 0,
       dalleParams,
-      batchGenerated: true
+      batchGenerated: true,
+      autoSelected: true,
+      autoSelectedVariantIndex: 0,
+      selectionMode: 'auto-best-result'
     };
 
       const generationMeta = {
@@ -545,7 +555,11 @@ function IllustrationsManager({ onOpenPage, onNavigateToCharacters }) {
         promptSections: promptSectionsUsed,
         promptTrace: promptTraceUsed,
         consistencyProfile: consistencyProfileUsed,
-        attempts
+        attempts,
+        variants: [selectedVariant],
+        selectionMode: 'auto-best-result',
+        autoSelected: true,
+        autoSelectedVariantIndex: 0
     };
 
     console.log('[IllustrationsManager] Persisting final illustration for page', page.number);
@@ -892,7 +906,11 @@ function IllustrationsManager({ onOpenPage, onNavigateToCharacters }) {
                 variant: {
                   ...variant,
                   variantIndex: index,
-                  batchGenerated: false
+                  batchGenerated: false,
+                  autoSelected: false,
+                  selectionMode: 'manual-review',
+                  variants: currentVariants,
+                  allVariants: currentVariants
                 },
                 generationMeta: {
                   ...(currentPage.generationMeta || {}),
@@ -903,7 +921,11 @@ function IllustrationsManager({ onOpenPage, onNavigateToCharacters }) {
                   model: currentPage.generationMeta?.model || null,
                   size: variant.dalleParams?.size || currentPage.generationMeta?.size || null,
                   quality: variant.dalleParams?.quality || currentPage.generationMeta?.quality || 'standard',
-                  status: 'ready'
+                  status: 'ready',
+                  variants: currentVariants,
+                  selectionMode: 'manual-review',
+                  autoSelected: false,
+                  autoSelectedVariantIndex: index
                 },
                 updateProject
               });
