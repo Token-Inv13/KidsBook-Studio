@@ -18,6 +18,7 @@ describe('illustrationPromptBuilder', () => {
     description: 'friendly child with a bright smile',
     clothing: 'yellow raincoat',
     referencePrompt: 'canonical character sheet',
+    referenceImagePath: '/tmp/reference.png',
     colorPalette: ['#F2C14E', '#4A90E2']
   };
 
@@ -39,6 +40,7 @@ describe('illustrationPromptBuilder', () => {
     });
 
     expect(result.prompt).toContain('VISUAL IDENTITY LOCK');
+    expect(result.prompt).toContain('REFERENCE LOCK');
     expect(result.prompt).toContain('STYLE LOCK');
     expect(result.prompt).toContain('PALETTE LOCK');
     expect(result.prompt).toContain('SCENE DIRECTION');
@@ -47,12 +49,16 @@ describe('illustrationPromptBuilder', () => {
     expect(result.negativePrompt).toContain('different face');
     expect(result.metadata.identityHash).toMatch(/^[0-9a-f]{8}$/);
     expect(result.metadata.promptTrace.pageNumber).toBe(4);
+    expect(result.metadata.promptTrace.referenceImagePath).toBe('/tmp/reference.png');
     expect(result.metadata.promptSections.templatePrompt).toContain('mixed layout');
   });
 
   test('validateRevisedPromptConsistency rewards stable character and style markers', () => {
     const result = validateRevisedPromptConsistency(
-      'Mia 6-year-old round face freckles brown bob haircut yellow raincoat soft watercolor illustration #F2C14E #4A90E2',
+      {
+        revisedPrompt: 'Mia 6-year-old round face freckles brown bob haircut yellow raincoat soft watercolor illustration #F2C14E #4A90E2',
+        prompt: 'REFERENCE LOCK: use the selected visual identity image as the canonical visual anchor for every page. The main character MUST match the reference image EXACTLY in face, hair, proportions, and style.'
+      },
       {
         ...spec,
         mainCharacter: spec.mainCharacter,
@@ -63,6 +69,7 @@ describe('illustrationPromptBuilder', () => {
     expect(result.isConsistent).toBe(true);
     expect(result.flags.faceStable).toBe(true);
     expect(result.flags.styleStable).toBe(true);
+    expect(result.flags.paletteAdherence).toBe(true);
     expect(result.groupScores.faceHair.score).toBeGreaterThanOrEqual(0.5);
   });
 

@@ -138,7 +138,10 @@ export const createProjectImageAsset = (image = {}, pageId = null) => {
     promptSections: image.promptSections && typeof image.promptSections === 'object' ? image.promptSections : null,
     promptTrace: image.promptTrace && typeof image.promptTrace === 'object' ? image.promptTrace : null,
     consistencyProfile: image.consistencyProfile && typeof image.consistencyProfile === 'object' ? image.consistencyProfile : null,
-    identityHash: toNonEmptyString(image.identityHash) || null
+    identityHash: toNonEmptyString(image.identityHash) || null,
+    referenceImageId: toNonEmptyString(image.referenceImageId) || null,
+    referenceImageBase64: toNonEmptyString(image.referenceImageBase64) || null,
+    referenceImageMimeType: toNonEmptyString(image.referenceImageMimeType) || null
   };
 };
 
@@ -201,12 +204,15 @@ const buildImagesIndex = (project) => {
   }
 
   const mainCharacter = project.visualIdentity?.mainCharacter;
-  if (mainCharacter?.referenceImage || mainCharacter?.referenceImagePath) {
+  if (mainCharacter?.referenceImage || mainCharacter?.referenceImagePath || mainCharacter?.referenceImageBase64) {
     images.push(normalizeImageEntry({
       id: 'main-character-reference',
       role: CHARACTER_REFERENCE_ROLE,
       referenceImage: mainCharacter.referenceImage,
       referenceImagePath: mainCharacter.referenceImagePath,
+      referenceImageBase64: mainCharacter.referenceImageBase64,
+      referenceImageMimeType: mainCharacter.referenceImageMimeType,
+      referenceImageId: mainCharacter.referenceImageId || 'main-character-reference',
       createdAt: project.visualIdentity?.validatedAt || null
     }));
   }

@@ -159,6 +159,8 @@ Mood: friendly, approachable, expressive
       // Download and save the reference image locally (only in Electron)
       let localImagePath = selectedVariant.url;
       let imagePath = null;
+      let referenceImageBase64 = null;
+      let referenceImageMimeType = 'image/png';
       
       if (window.electron && window.electron.fs && window.electron.fs.downloadImage) {
         const timestamp = Date.now();
@@ -176,6 +178,16 @@ Mood: friendly, approachable, expressive
             localImagePath = `file://${imagePath}`;
             console.log('[VisualIdentityWizard] Reference image saved successfully to:', imagePath);
             console.log('[VisualIdentityWizard] Using local image path:', localImagePath);
+            if (window.electron.fs.readFileBase64) {
+              try {
+                const base64Result = await window.electron.fs.readFileBase64(imagePath);
+                if (base64Result && base64Result.success && base64Result.data) {
+                  referenceImageBase64 = base64Result.data;
+                }
+              } catch (base64Error) {
+                console.warn('[VisualIdentityWizard] Unable to read reference image as base64:', base64Error);
+              }
+            }
           } else {
             const errorMsg = downloadResult?.error || 'Erreur inconnue';
             console.warn('[VisualIdentityWizard] Download failed, using URL directly:', errorMsg);
@@ -200,6 +212,9 @@ Mood: friendly, approachable, expressive
       const mainCharacterData = {
         ...mainCharacter,
         referenceImage: localImagePath,
+        referenceImageBase64,
+        referenceImageMimeType,
+        referenceImageId: 'main-character-reference',
         referencePrompt: selectedVariant.prompt,
         colorPalette: colorPalette
       };
@@ -234,6 +249,9 @@ Mood: friendly, approachable, expressive
       const updatedCharacterData = {
         ...currentProject.characters[0],
         referenceImage: localImagePath,
+        referenceImageBase64,
+        referenceImageMimeType,
+        referenceImageId: 'main-character-reference',
         colorPalette
       };
       

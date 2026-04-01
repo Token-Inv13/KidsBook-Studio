@@ -84,7 +84,7 @@ const buildCharacterLockLine = (mainCharacter) => {
 
   const coreText = fragments.length > 0 ? fragments.join(', ') : 'validated main character';
 
-  return `VISUAL IDENTITY LOCK: keep the same ${coreText} on every page. Preserve face shape, hairstyle silhouette, hair color, skin tone, age impression, body proportions, and signature outfit details.`;
+  return `VISUAL IDENTITY LOCK: keep the same ${coreText} on every page. Preserve face shape, hairstyle silhouette, hair color, skin tone, age impression, body proportions, and signature outfit details. The main character MUST match the reference image EXACTLY in face, hair, proportions, and style. Do NOT reinterpret or redesign the character. This is the SAME character, not a variation.`;
 };
 
 const buildAgePhrase = (age) => {
@@ -112,7 +112,7 @@ const buildPaletteLine = (palette) => {
     return '';
   }
 
-  return `PALETTE LOCK: keep the validated palette dominant across the whole book: ${palette.join(', ')}. Use these tones as the stable color guide and avoid introducing a competing palette.`;
+  return `PALETTE LOCK: keep the validated palette dominant across the whole book: ${palette.join(', ')}. Only use the provided palette. Avoid introducing new dominant colors. Use these tones as the stable color guide and avoid introducing a competing palette.`;
 };
 
 const buildStyleLine = (artStyle) => {
@@ -121,15 +121,15 @@ const buildStyleLine = (artStyle) => {
   }
 
   const styleLabel = artStyle.prompt || artStyle.id;
-  return `STYLE LOCK: maintain a constant children's-book art direction: ${styleLabel}. Do not drift into a different rendering mode, medium, or level of realism from page to page.`;
+  return `STYLE LOCK: maintain a constant children's-book art direction: ${styleLabel}. Do not drift into a different rendering mode, medium, or level of realism from page to page. Do not change rendering style between pages.`;
 };
 
 const buildSceneGuardLine = () => {
-  return 'SCENE LIMIT: the scene may vary, but only the action, background, framing, and composition may change. The character identity, age impression, hairstyle, outfit, and art style must stay fixed.';
+  return 'SCENE LIMIT: the scene may vary, but only the action, background, framing, and composition may change. The character identity, age impression, hairstyle, outfit, palette, and art style must stay fixed.';
 };
 
 const buildQualityLine = () => {
-  return 'QUALITY RULES: coherent chapter-to-chapter character continuity, no random redesign, no extra unrelated props, no text, no watermark, no logo, no palette chart, and no style drift.';
+  return 'QUALITY RULES: coherent chapter-to-chapter character continuity, no random redesign, no alternative character design, no extra unrelated props, no text, no watermark, no logo, no palette chart, no style drift, no face drift, no hairstyle drift, and no eye-style drift.';
 };
 
 const buildNegativePrompt = () => {
@@ -144,9 +144,12 @@ const buildNegativePrompt = () => {
     'color chart',
     'different face',
     'different hairstyle',
+    'different eye style',
     'different age',
     'different outfit',
+    'alternative character design',
     'style drift',
+    'palette drift',
     'semi 3d',
     'photorealistic',
     'busy clutter'
@@ -176,6 +179,10 @@ const buildInvariants = ({ mainCharacter, artStyle }) => {
     invariants.push(`Tenue / silhouette signature: ${mainCharacter.clothing}`);
   }
 
+  if (mainCharacter.referenceImage || mainCharacter.referenceImagePath || mainCharacter.referenceImageBase64) {
+    invariants.push('Reference image lock: the selected visual identity image is canonical and must be replicated exactly.');
+  }
+
   if (mainCharacter.colorPalette.length > 0) {
     invariants.push(`Palette verrouillee: ${mainCharacter.colorPalette.join(', ')}`);
   }
@@ -197,6 +204,9 @@ export const buildVisualIdentityPromptProfile = (spec = {}) => {
     referencePrompt: toCleanString(spec?.mainCharacter?.referencePrompt || spec?.referencePrompt),
     referenceImage: toCleanString(spec?.mainCharacter?.referenceImage || spec?.character?.referenceImage),
     referenceImagePath: toCleanString(spec?.mainCharacter?.referenceImagePath || spec?.character?.referenceImagePath),
+    referenceImageBase64: toCleanString(spec?.mainCharacter?.referenceImageBase64 || spec?.character?.referenceImageBase64),
+    referenceImageMimeType: toCleanString(spec?.mainCharacter?.referenceImageMimeType || spec?.character?.referenceImageMimeType),
+    referenceImageId: toCleanString(spec?.mainCharacter?.referenceImageId || spec?.character?.referenceImageId),
     colorPalette: normalizePalette(spec?.mainCharacter?.colorPalette || spec?.palette)
   };
 
@@ -214,6 +224,8 @@ export const buildVisualIdentityPromptProfile = (spec = {}) => {
       description: normalizedMainCharacter.description,
       clothing: normalizedMainCharacter.clothing,
       referencePrompt: normalizedMainCharacter.referencePrompt,
+      referenceImagePath: normalizedMainCharacter.referenceImagePath,
+      referenceImageId: normalizedMainCharacter.referenceImageId,
       colorPalette: normalizedMainCharacter.colorPalette
     },
     artStyle
@@ -238,6 +250,9 @@ export const buildVisualIdentityPromptProfile = (spec = {}) => {
   const paletteAnchors = normalizedMainCharacter.colorPalette.map((color) => toCleanString(color)).filter(Boolean);
 
   const invariantPrompt = buildCharacterLockLine(normalizedMainCharacter);
+  const referencePrompt = normalizedMainCharacter.referenceImage || normalizedMainCharacter.referenceImagePath || normalizedMainCharacter.referenceImageBase64
+    ? 'REFERENCE LOCK: use the selected visual identity image as the canonical visual anchor for every page.'
+    : '';
   const stylePrompt = buildStyleLine(artStyle);
   const palettePrompt = buildPaletteLine(normalizedMainCharacter.colorPalette);
   const sceneGuardPrompt = buildSceneGuardLine();
@@ -249,6 +264,7 @@ export const buildVisualIdentityPromptProfile = (spec = {}) => {
     identityHash,
     promptOrder: [
       'invariantPrompt',
+      'referencePrompt',
       'stylePrompt',
       'palettePrompt',
       'sceneGuardPrompt',
@@ -261,6 +277,7 @@ export const buildVisualIdentityPromptProfile = (spec = {}) => {
     ],
     promptSections: {
       invariantPrompt,
+      referencePrompt,
       stylePrompt,
       palettePrompt,
       sceneGuardPrompt,
@@ -283,6 +300,9 @@ export const buildVisualIdentityPromptProfile = (spec = {}) => {
       clothing: normalizedMainCharacter.clothing,
       referenceImage: normalizedMainCharacter.referenceImage,
       referenceImagePath: normalizedMainCharacter.referenceImagePath,
+      referenceImageBase64: normalizedMainCharacter.referenceImageBase64,
+      referenceImageMimeType: normalizedMainCharacter.referenceImageMimeType,
+      referenceImageId: normalizedMainCharacter.referenceImageId,
       colorPalette: normalizedMainCharacter.colorPalette,
       artStyle
     }
@@ -299,6 +319,9 @@ export const buildVisualIdentitySpec = ({ project, mainCharacterData }) => {
     referencePrompt: toCleanString(mainCharacterData?.referencePrompt),
     referenceImage: toCleanString(mainCharacterData?.referenceImage),
     referenceImagePath: toCleanString(mainCharacterData?.referenceImagePath),
+    referenceImageBase64: toCleanString(mainCharacterData?.referenceImageBase64),
+    referenceImageMimeType: toCleanString(mainCharacterData?.referenceImageMimeType),
+    referenceImageId: toCleanString(mainCharacterData?.referenceImageId),
     colorPalette: normalizePalette(mainCharacterData?.colorPalette)
   };
 
@@ -350,6 +373,13 @@ export const validateVisualIdentitySpec = (spec) => {
     errors.push('mainCharacter.referencePrompt est requis.');
   }
 
+  const referenceImage = toCleanString(mainCharacter?.referenceImage || spec.referenceImage);
+  const referenceImagePath = toCleanString(mainCharacter?.referenceImagePath || spec.referenceImagePath);
+  const referenceImageBase64 = toCleanString(mainCharacter?.referenceImageBase64 || spec.referenceImageBase64);
+  if (!referenceImage && !referenceImagePath && !referenceImageBase64) {
+    errors.push('mainCharacter.referenceImage, referenceImagePath ou referenceImageBase64 est requis.');
+  }
+
   const colorPalette = Array.isArray(mainCharacter?.colorPalette)
     ? mainCharacter.colorPalette
     : spec.palette;
@@ -371,6 +401,9 @@ export const validateVisualIdentitySpec = (spec) => {
     const sections = spec.promptProfile.promptSections || {};
     if (!toCleanString(sections.invariantPrompt)) {
       errors.push('promptProfile.promptSections.invariantPrompt est requis.');
+    }
+    if ((referenceImage || referenceImagePath || referenceImageBase64) && !toCleanString(sections.referencePrompt)) {
+      errors.push('promptProfile.promptSections.referencePrompt est requis.');
     }
     if (!toCleanString(sections.stylePrompt) && !styleId && !stylePrompt) {
       errors.push('promptProfile.promptSections.stylePrompt est requis.');

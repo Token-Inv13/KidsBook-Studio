@@ -21,6 +21,7 @@ describe('visualIdentitySpec', () => {
     description: 'friendly child with a bright smile',
     clothing: 'yellow raincoat',
     referencePrompt: 'canonical character sheet',
+    referenceImagePath: '/tmp/reference.png',
     colorPalette: ['#F2C14E', '#4A90E2']
   };
 
@@ -38,6 +39,7 @@ describe('visualIdentitySpec', () => {
     expect(profile.promptSections.invariantPrompt).toContain('6-year-old');
     expect(profile.promptSections.stylePrompt).toContain('soft watercolor illustration');
     expect(profile.promptSections.palettePrompt).toContain('#F2C14E');
+    expect(profile.promptSections.referencePrompt).toContain('canonical visual anchor');
     expect(profile.promptSections.sceneGuardPrompt).toContain('scene may vary');
     expect(profile.consistencyAnchors.faceHair.length).toBeGreaterThan(0);
     expect(profile.consistencyAnchors.age).toContain('6-year-old');
@@ -53,6 +55,7 @@ describe('visualIdentitySpec', () => {
     expect(spec.promptProfile).toBeDefined();
     expect(spec.promptProfile.promptSections.qualityPrompt).toContain('no text');
     expect(spec.invariants).toContain('Palette verrouillee: #F2C14E, #4A90E2');
+    expect(spec.invariants).toContain('Reference image lock: the selected visual identity image is canonical and must be replicated exactly.');
   });
 
   test('validateVisualIdentitySpec accepts enriched prompt profiles', () => {

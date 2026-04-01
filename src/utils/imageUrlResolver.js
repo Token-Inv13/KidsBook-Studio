@@ -41,6 +41,15 @@ export const isRenderableImageUrl = (url) => {
   return false;
 };
 
+const toDataUrl = (base64, mimeType = 'image/png') => {
+  if (typeof base64 !== 'string' || !base64.trim()) {
+    return null;
+  }
+
+  const cleaned = base64.trim().replace(/^data:[^;]+;base64,/, '');
+  return `data:${mimeType || 'image/png'};base64,${cleaned}`;
+};
+
 export const resolvePageImageUrl = (page) => {
   if (!page) {
     return null;
@@ -63,6 +72,7 @@ export const resolveCharacterReferenceImageUrl = (mainCharacter) => {
 
   const candidates = [
     toFileUrl(mainCharacter.referenceImagePath),
+    toDataUrl(mainCharacter.referenceImageBase64, mainCharacter.referenceImageMimeType),
     mainCharacter.referenceImage
   ];
 

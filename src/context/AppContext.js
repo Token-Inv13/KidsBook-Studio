@@ -383,7 +383,9 @@ export const AppProvider = ({ children }) => {
         prompt,
         size: options.size || '1024x1024',
         n: options.n || 1,
-        quality: options.quality || 'standard'
+        quality: options.quality || 'standard',
+        referenceImageId: options.referenceImageId || null,
+        referenceImagePath: options.referenceImagePath || null
       })
     });
 

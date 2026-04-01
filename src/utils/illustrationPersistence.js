@@ -72,6 +72,7 @@ export const buildIllustrationSelectionState = ({
     promptTrace: generationMeta?.promptTrace || variant?.promptTrace || null,
     consistencyProfile: generationMeta?.consistencyProfile || variant?.consistencyProfile || null,
     identityHash: generationMeta?.identityHash || variant?.identityHash || null,
+    referenceImageId: generationMeta?.referenceImageId || variant?.referenceImageId || null,
     generationStatus: 'ready',
     sourcePageId: page.id,
     createdAt: selectedAt
@@ -100,7 +101,8 @@ export const buildIllustrationSelectionState = ({
     promptSections: variant?.promptSections || null,
     promptTrace: variant?.promptTrace || null,
     consistencyProfile: variant?.consistencyProfile || null,
-    identityHash: variant?.identityHash || null
+    identityHash: variant?.identityHash || null,
+    referenceImageId: variant?.referenceImageId || null
   };
 
   return { imageAsset, illustration };
@@ -166,7 +168,8 @@ export async function finalizePageIllustrationSelection({
     promptSections: generationMeta?.promptSections || variant?.promptSections || null,
     promptTrace: generationMeta?.promptTrace || variant?.promptTrace || null,
     consistencyProfile: generationMeta?.consistencyProfile || variant?.consistencyProfile || null,
-    identityHash: generationMeta?.identityHash || variant?.identityHash || null
+    identityHash: generationMeta?.identityHash || variant?.identityHash || null,
+    referenceImageId: generationMeta?.referenceImageId || variant?.referenceImageId || null
   };
 
   await updateProject((prevProject) => {

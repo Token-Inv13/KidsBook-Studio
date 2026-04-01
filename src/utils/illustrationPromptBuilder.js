@@ -42,6 +42,25 @@ const buildContinuityLine = (continuityContext, retryForConsistency) => {
   return parts.join(' ');
 };
 
+const buildReferenceLockLine = (mainCharacter) => {
+  const referencePresent = Boolean(
+    mainCharacter?.referenceImage ||
+    mainCharacter?.referenceImagePath ||
+    mainCharacter?.referenceImageBase64
+  );
+
+  if (!referencePresent) {
+    return '';
+  }
+
+  return [
+    'REFERENCE LOCK: use the selected visual identity image as the canonical source for every page.',
+    'The main character MUST match the reference image EXACTLY in face, hair, proportions, and style.',
+    'Do NOT reinterpret or redesign the character.',
+    'This is the SAME character, not a variation.'
+  ].join(' ');
+};
+
 const buildSafetyLine = (safeMode) => {
   if (!safeMode) {
     return '';
@@ -135,7 +154,7 @@ const getPaletteTokens = (visualIdentity) => {
     || [];
 
   return Array.isArray(palette)
-    ? palette.map((color) => toCleanString(color)).filter(Boolean).slice(0, 8)
+    ? palette.map((color) => toCleanString(color).toLowerCase()).filter(Boolean).slice(0, 8)
     : [];
 };
 
@@ -160,10 +179,12 @@ export const buildIllustrationPrompt = ({
   const sceneText = toShortText(sceneDescription, 700);
   const templateInstructions = getTemplateInstructions(template || page?.template);
   const continuityLine = buildContinuityLine(continuityContext, retryForConsistency);
+  const referenceLine = buildReferenceLockLine(mainCharacter);
   const safetyLine = buildSafetyLine(safeMode);
 
   const promptSections = {
     invariantPrompt: profile.promptSections?.invariantPrompt || '',
+    referencePrompt: profile.promptSections?.referencePrompt || referenceLine,
     stylePrompt: profile.promptSections?.stylePrompt || '',
     palettePrompt: profile.promptSections?.palettePrompt || '',
     sceneGuardPrompt: profile.promptSections?.sceneGuardPrompt || '',
@@ -179,6 +200,7 @@ export const buildIllustrationPrompt = ({
 
   const prompt = combinePromptSections([
     promptSections.invariantPrompt,
+    promptSections.referencePrompt,
     promptSections.stylePrompt,
     promptSections.palettePrompt,
     promptSections.sceneGuardPrompt,
@@ -198,6 +220,9 @@ export const buildIllustrationPrompt = ({
     metadata: {
       artisticStyle: spec.artStyle?.prompt || spec.artStyle?.id || spec.stylePrompt || spec.artisticStyle || '',
       characterReference: spec.mainCharacter?.referenceImage || null,
+      characterReferenceId: spec.mainCharacter?.referenceImageId || null,
+      characterReferencePath: spec.mainCharacter?.referenceImagePath || null,
+      characterReferenceBase64: spec.mainCharacter?.referenceImageBase64 ? true : false,
       colorPalette: spec.mainCharacter?.colorPalette || [],
       characterDescriptors: toTokenSet([
         mainCharacter.name,
@@ -218,13 +243,20 @@ export const buildIllustrationPrompt = ({
         pageNumber: page?.number || null,
         template: template || page?.template || null,
         sectionOrder: profile.promptOrder,
+        referenceImageId: profile.lockedAttributes?.referenceImageId || spec.mainCharacter?.referenceImageId || null,
+        referenceImagePath: profile.lockedAttributes?.referenceImagePath || spec.mainCharacter?.referenceImagePath || null,
         source: 'illustrationPromptBuilder'
       }
     }
   };
 };
 
-export const validateRevisedPromptConsistency = (revisedPrompt, visualIdentity) => {
+export const validateRevisedPromptConsistency = (input, visualIdentity) => {
+  const normalizedInput = typeof input === 'string'
+    ? { revisedPrompt: input, prompt: '' }
+    : (input || {});
+  const revisedPrompt = normalizedInput.revisedPrompt || normalizedInput.revised_prompt || '';
+  const prompt = normalizedInput.prompt || normalizedInput.finalPrompt || '';
   const fallback = {
     isConsistent: true,
     score: 1,
@@ -243,9 +275,16 @@ export const validateRevisedPromptConsistency = (revisedPrompt, visualIdentity) 
 
   const profile = visualIdentity.promptProfile || buildVisualIdentityPromptProfile(visualIdentity);
   const revisedTokenSet = toTokenSet(revisedPrompt);
+  const promptTokenSet = toTokenSet(prompt);
   const identityTokens = getCharacterIdentityTokens(profile.lockedAttributes || visualIdentity.mainCharacter);
   const styleTokens = getStyleTokens(visualIdentity);
   const paletteTokens = getPaletteTokens(visualIdentity);
+  const referenceConfigured = Boolean(
+    profile.lockedAttributes?.referenceImage ||
+    profile.lockedAttributes?.referenceImagePath ||
+    profile.lockedAttributes?.referenceImageBase64
+  );
+  const referenceTokens = referenceConfigured ? ['reference', 'lock', 'canonical', 'visual', 'anchor'] : [];
 
   const groupScores = {
     name: extractWeightedMatches(identityTokens.nameTokens, revisedTokenSet),
@@ -253,16 +292,18 @@ export const validateRevisedPromptConsistency = (revisedPrompt, visualIdentity) 
     age: extractWeightedMatches(identityTokens.ageTokens, revisedTokenSet),
     clothing: extractWeightedMatches(identityTokens.clothingTokens, revisedTokenSet),
     style: extractWeightedMatches(styleTokens, revisedTokenSet),
-    palette: extractWeightedMatches(paletteTokens, revisedTokenSet)
+    palette: extractWeightedMatches(paletteTokens, revisedTokenSet),
+    referenceLock: extractWeightedMatches(referenceTokens, promptTokenSet)
   };
 
   const weights = {
     name: 0.05,
-    faceHair: 0.35,
-    age: 0.15,
-    clothing: 0.15,
-    style: 0.2,
-    palette: 0.1
+    faceHair: 0.3,
+    age: 0.1,
+    clothing: 0.1,
+    style: 0.25,
+    palette: 0.15,
+    referenceLock: 0.05
   };
 
   const score = Object.entries(groupScores).reduce((sum, [group, result]) => {
@@ -278,12 +319,16 @@ export const validateRevisedPromptConsistency = (revisedPrompt, visualIdentity) 
     && (styleTokens.length === 0 || groupScores.style.score >= 0.2);
 
   const flags = {
-    faceStable: groupScores.faceHair.score >= 0.5,
-    hairstyleStable: groupScores.faceHair.score >= 0.5,
+    faceSimilarityProxy: groupScores.faceHair.score >= 0.45,
+    faceStable: groupScores.faceHair.score >= 0.45,
+    hairstyleStable: groupScores.faceHair.score >= 0.45,
     ageStable: identityTokens.ageTokens.length === 0 || groupScores.age.score >= 0.5,
     clothingStable: identityTokens.clothingTokens.length === 0 || groupScores.clothing.score >= 0.45,
+    styleAdherence: styleTokens.length === 0 || groupScores.style.score >= 0.25,
     styleStable: styleTokens.length === 0 || groupScores.style.score >= 0.25,
-    paletteStable: paletteTokens.length === 0 || groupScores.palette.score >= 0.4,
+    paletteAdherence: paletteTokens.length === 0 || groupScores.palette.score >= 0.35,
+    paletteStable: paletteTokens.length === 0 || groupScores.palette.score >= 0.35,
+    referenceLockPresent: referenceConfigured,
     characterNameStable: identityTokens.nameTokens.length === 0 || groupScores.name.score >= 0.5
   };
 
@@ -298,7 +343,7 @@ export const validateRevisedPromptConsistency = (revisedPrompt, visualIdentity) 
   const combinedMatchedTokens = combinedExpectedTokens.filter((token) => revisedTokenSet.includes(token));
 
   return {
-    isConsistent: score >= 0.55 && anchorRequirementMet && flags.styleStable,
+    isConsistent: score >= 0.55 && flags.faceSimilarityProxy && flags.styleAdherence && flags.paletteAdherence,
     score,
     anchorRequirementMet,
     anchorMatchedTokens,

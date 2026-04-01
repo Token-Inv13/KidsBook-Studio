@@ -114,7 +114,13 @@ async function startOpenAIService() {
         });
       }
 
-      const { prompt, size = '1024x1024', quality = 'standard' } = req.body;
+      const {
+        prompt,
+        size = '1024x1024',
+        quality = 'standard',
+        referenceImageId = null,
+        referenceImagePath = null
+      } = req.body;
 
       if (!prompt) {
         return res.status(400).json({ 
@@ -127,7 +133,9 @@ async function startOpenAIService() {
         size,
         quality,
         promptLength: prompt.length,
-        promptPreview: getPromptPreview(prompt)
+        promptPreview: getPromptPreview(prompt),
+        referenceImageId,
+        hasReferenceImagePath: Boolean(referenceImagePath)
       });
 
       const response = await openaiClient.images.generate({
@@ -144,7 +152,8 @@ async function startOpenAIService() {
         success: true,
         url: response.data[0].url,
         revised_prompt: response.data[0].revised_prompt,
-        requestId
+        requestId,
+        referenceImageId
       });
     } catch (error) {
       const statusCode = Number(error?.status) || Number(error?.statusCode) || 500;

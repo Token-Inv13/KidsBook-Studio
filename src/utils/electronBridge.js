@@ -56,6 +56,10 @@ const mockFS = {
     console.warn('File system not available in browser mode');
     return { success: false, error: 'Not available in browser mode' };
   },
+  readFileBase64: async (path) => {
+    console.warn('File system not available in browser mode');
+    return { success: false, error: 'Not available in browser mode' };
+  },
   writeFile: async (path, data) => {
     console.warn('File system not available in browser mode');
     return { success: false, error: 'Not available in browser mode' };

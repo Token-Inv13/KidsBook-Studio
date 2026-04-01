@@ -306,13 +306,16 @@ function IllustrationsManager({ onOpenPage, onNavigateToCharacters }) {
       : '';
     
     const requestGeneratedImage = async (prompt) => {
+      const referenceCharacter = currentProject.visualIdentitySpec?.mainCharacter || {};
       const response = await fetch(`${openaiServiceUrl}/api/generate-image`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           prompt,
           size: dalleParams.size,
-          quality: 'standard'
+          quality: 'standard',
+          referenceImageId: referenceCharacter.referenceImageId || 'main-character-reference',
+          referenceImagePath: referenceCharacter.referenceImagePath || null
         })
       });
 
@@ -331,8 +334,8 @@ function IllustrationsManager({ onOpenPage, onNavigateToCharacters }) {
       return payload;
     };
 
-    const maxBatchRetries = 2;
-    const maxConsistencyAttempts = 3;
+    const maxBatchRetries = 0;
+    const maxConsistencyAttempts = 1;
     const minFallbackConsistencyScore = 0.35;
     const minFallbackConsistencyScoreWithStrongAnchors = 0.18;
     const attempts = [];
@@ -407,7 +410,12 @@ function IllustrationsManager({ onOpenPage, onNavigateToCharacters }) {
           continue;
         }
 
-        candidateConsistency = validateRevisedPromptConsistency(generated.revised_prompt, currentProject.visualIdentity);
+        candidateConsistency = validateRevisedPromptConsistency({
+          revisedPrompt: generated.revised_prompt,
+          prompt: imagePrompt,
+          promptSections,
+          promptTrace: metadata?.promptTrace || null
+        }, currentProject.visualIdentity);
         consistencyProfileUsed = candidateConsistency;
 
         if (!bestCandidate || candidateConsistency.score > bestCandidate.consistency.score) {
@@ -501,14 +509,15 @@ function IllustrationsManager({ onOpenPage, onNavigateToCharacters }) {
       throw lastBatchError || new Error(`Echec final de generation pour la page ${page.number}`);
     }
 
-    const selectedVariant = {
-      url: data.url,
-      requestId: data.requestId || null,
-      sceneDescription: scene,
-      revised_prompt: data.revised_prompt,
-      promptFinal: finalPromptUsed,
-      consistencyScore: consistency.score,
-      consistencyMatchedTokens: consistency.matchedTokens,
+      const selectedVariant = {
+        url: data.url,
+        requestId: data.requestId || null,
+        sceneDescription: scene,
+        revised_prompt: data.revised_prompt,
+        referenceImageId: data.referenceImageId || currentProject.visualIdentitySpec?.mainCharacter?.referenceImageId || 'main-character-reference',
+        promptFinal: finalPromptUsed,
+        consistencyScore: consistency.score,
+        consistencyMatchedTokens: consistency.matchedTokens,
       consistencyAnchorRequirementMet: consistency.anchorRequirementMet,
       consistencyAnchorMatchedTokens: consistency.anchorMatchedTokens,
       consistencyAnchorExpectedTokens: consistency.anchorExpectedTokens,
@@ -522,20 +531,21 @@ function IllustrationsManager({ onOpenPage, onNavigateToCharacters }) {
       batchGenerated: true
     };
 
-    const generationMeta = {
-      requestId: data.requestId || null,
-      promptFinal: finalPromptUsed,
-      revisedPrompt: data.revised_prompt || '',
-      createdAt: new Date().toISOString(),
-      model: data.model || null,
-      size: dalleParams.size,
-      quality: 'standard',
-      identityHash: promptTraceUsed?.identityHash || identityHash || null,
-      identityVersion,
-      promptSections: promptSectionsUsed,
-      promptTrace: promptTraceUsed,
-      consistencyProfile: consistencyProfileUsed,
-      attempts
+      const generationMeta = {
+        requestId: data.requestId || null,
+        promptFinal: finalPromptUsed,
+        revisedPrompt: data.revised_prompt || '',
+        createdAt: new Date().toISOString(),
+        model: data.model || null,
+        size: dalleParams.size,
+        quality: 'standard',
+        identityHash: promptTraceUsed?.identityHash || identityHash || null,
+        identityVersion,
+        referenceImageId: data.referenceImageId || currentProject.visualIdentitySpec?.mainCharacter?.referenceImageId || 'main-character-reference',
+        promptSections: promptSectionsUsed,
+        promptTrace: promptTraceUsed,
+        consistencyProfile: consistencyProfileUsed,
+        attempts
     };
 
     console.log('[IllustrationsManager] Persisting final illustration for page', page.number);

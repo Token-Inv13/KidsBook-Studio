@@ -24,6 +24,7 @@ contextBridge.exposeInMainWorld('electron', {
   saveFile: (options) => ipcRenderer.invoke('file:save', options),
   fs: {
     readFile: (filePath) => ipcRenderer.invoke('fs:readFile', filePath),
+    readFileBase64: (filePath) => ipcRenderer.invoke('fs:readFileBase64', filePath),
     writeFile: (filePath, data) => ipcRenderer.invoke('fs:writeFile', filePath, data),
     mkdir: (dirPath) => ipcRenderer.invoke('fs:mkdir', dirPath),
     exists: (filePath) => ipcRenderer.invoke('fs:exists', filePath),

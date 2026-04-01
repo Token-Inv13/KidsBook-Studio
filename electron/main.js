@@ -377,6 +377,17 @@ ipcMain.handle('fs:readFile', async (event, filePath) => {
   }
 });
 
+ipcMain.handle('fs:readFileBase64', async (event, filePath) => {
+  const fs = require('fs').promises;
+  try {
+    const safePath = normalizeAbsolutePath(filePath);
+    const data = await fs.readFile(safePath);
+    return { success: true, data: data.toString('base64') };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
 ipcMain.handle('fs:writeFile', async (event, filePath, data) => {
   const fs = require('fs').promises;
   try {

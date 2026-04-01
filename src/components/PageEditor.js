@@ -135,13 +135,16 @@ const PageEditor = ({ pageId }) => {
         : '';
 
       const requestGeneratedImage = async (prompt) => {
+        const referenceCharacter = currentProject.visualIdentitySpec?.mainCharacter || {};
         const response = await fetch(`${openaiServiceUrl}/api/generate-image`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             prompt,
             size: dalleParams.size,
-            quality: 'standard'
+            quality: 'standard',
+            referenceImageId: referenceCharacter.referenceImageId || 'main-character-reference',
+            referenceImagePath: referenceCharacter.referenceImagePath || null
           })
         });
 
@@ -166,7 +169,7 @@ const PageEditor = ({ pageId }) => {
       for (let i = 0; i < 4; i++) {
         let data = null;
         let consistency = { isConsistent: true, score: 1, matchedTokens: [], expectedTokens: [] };
-        const maxConsistencyAttempts = 3;
+        const maxConsistencyAttempts = 1;
         let bestCandidate = null;
         let safeMode = false;
         let negativePromptUsed = '';
@@ -224,7 +227,12 @@ const PageEditor = ({ pageId }) => {
             continue;
           }
 
-          consistency = validateRevisedPromptConsistency(generated.revised_prompt, currentProject.visualIdentity);
+          consistency = validateRevisedPromptConsistency({
+            revisedPrompt: generated.revised_prompt,
+            prompt: imagePrompt,
+            promptSections,
+            promptTrace: metadata?.promptTrace || null
+          }, currentProject.visualIdentity);
           consistencyProfileUsed = consistency;
 
           if (!bestCandidate || consistency.score > bestCandidate.consistency.score) {
@@ -272,6 +280,7 @@ const PageEditor = ({ pageId }) => {
           url: data.url,
           requestId: data.requestId || null,
           revised_prompt: data.revised_prompt,
+          referenceImageId: data.referenceImageId || currentProject.visualIdentitySpec?.mainCharacter?.referenceImageId || 'main-character-reference',
           generatedAt: new Date().toISOString(),
           sceneDescription: scene,
           dalleParams,
@@ -315,18 +324,19 @@ const PageEditor = ({ pageId }) => {
           variantIndex: index,
           batchGenerated: false
         },
-        generationMeta: {
-          requestId: variant.requestId || null,
-          promptFinal: variant.promptFinal || null,
-          revisedPrompt: variant.revised_prompt || '',
-          createdAt: variant.generatedAt || new Date().toISOString(),
-          model: null,
-          size: variant.dalleParams?.size || null,
-          quality: variant.dalleParams?.quality || 'standard',
-          status: 'ready',
-          promptSections: variant.promptSections || null,
-          promptTrace: variant.promptTrace || null,
-          consistencyProfile: variant.consistencyProfile || null,
+          generationMeta: {
+            requestId: variant.requestId || null,
+            promptFinal: variant.promptFinal || null,
+            revisedPrompt: variant.revised_prompt || '',
+            createdAt: variant.generatedAt || new Date().toISOString(),
+            model: null,
+            size: variant.dalleParams?.size || null,
+            quality: variant.dalleParams?.quality || 'standard',
+            status: 'ready',
+            referenceImageId: variant.referenceImageId || currentProject.visualIdentitySpec?.mainCharacter?.referenceImageId || 'main-character-reference',
+            promptSections: variant.promptSections || null,
+            promptTrace: variant.promptTrace || null,
+            consistencyProfile: variant.consistencyProfile || null,
           identityHash: variant.identityHash || null
         },
         updateProject
