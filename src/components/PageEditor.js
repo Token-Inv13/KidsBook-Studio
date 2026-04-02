@@ -2,18 +2,10 @@
 import { useApp } from '../context/AppContext';
 import { Type, Image as ImageIcon, Maximize2, Grid, Wand2, RefreshCw } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
-import { validateRevisedPromptConsistency } from '../utils/imagePromptBuilder';
-import { buildSceneDescription } from '../utils/sceneBuilder';
-import { getRecommendedDalleParams } from '../utils/imageRatioCalculator';
 import { resolvePageImageUrl } from '../utils/imageUrlResolver';
-import { buildIllustrationPrompt } from '../utils/illustrationPromptBuilder';
-import {
-  AUTO_BEST_RESULT_MAX_CONSISTENCY_ATTEMPTS,
-  AUTO_BEST_RESULT_VARIANT_COUNT,
-  selectBestIllustrationVariant
-} from '../utils/illustrationAutoPipeline';
 import { validateVisualIdentitySpec } from '../utils/visualIdentitySpec';
 import { finalizePageIllustrationSelection } from '../utils/illustrationPersistence';
+import { generateIllustrationWithAutoPipeline } from '../utils/illustrationGenerationPipeline';
 
 const PageEditor = ({ pageId }) => {
   const { currentProject, updateProject, openaiServiceUrl } = useApp();
@@ -154,209 +146,19 @@ const PageEditor = ({ pageId }) => {
     }
 
     try {
-      // Step 1: Build scene description
       setIsGeneratingScene(true);
-      const scene = await buildSceneDescription({
-        pageText,
-        bookSummary: currentProject.summary || currentProject.description,
-        characters: currentProject.characters || [],
-        targetAge: currentProject.targetAge,
-        openaiServiceUrl
+      setSceneDescription('Analyse de scene en cours...');
+      setIsGeneratingVariants(true);
+      const pipelineResult = await generateIllustrationWithAutoPipeline({
+        currentProject,
+        page,
+        openaiServiceUrl,
+        mode: 'page'
       });
-      setSceneDescription(scene);
+      setSceneDescription(pipelineResult.scene);
       setIsGeneratingScene(false);
 
-      // Step 2: Generate variants internally and auto-select the best result
-      setIsGeneratingVariants(true);
-      const variants = [];
-      const dalleParams = getRecommendedDalleParams(page, currentProject.bookFormat || currentProject.format || '8x10');
-      const previousReferencePrompt = (currentProject.pages || [])
-        .filter((candidate) => (candidate.number || 0) < (page.number || 0))
-        .sort((a, b) => (b.number || 0) - (a.number || 0))
-        .map((candidate) => candidate?.illustration?.revised_prompt || candidate?.illustrationPrompt)
-        .find(Boolean);
-      const continuityContext = previousReferencePrompt
-        ? `Continuity reference from previous validated page: ${String(previousReferencePrompt).replace(/\s+/g, ' ').trim().slice(0, 420)}`
-        : '';
-
-      const requestGeneratedImage = async (prompt) => {
-        const referenceCharacter = currentProject.visualIdentitySpec?.mainCharacter || {};
-        const response = await fetch(`${openaiServiceUrl}/api/generate-image`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            prompt,
-            size: dalleParams.size,
-            quality: 'standard',
-            referenceImageId: referenceCharacter.referenceImageId || 'main-character-reference',
-            referenceImagePath: referenceCharacter.referenceImagePath || null
-          })
-        });
-
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok) {
-          const statusCode = payload.statusCode || response.status;
-          const requestId = payload.requestId ? ` [req:${payload.requestId}]` : '';
-          const baseMessage = payload.error || `Erreur lors de la génération (${statusCode})`;
-          const transientError = statusCode >= 500 || statusCode === 429;
-          const error = new Error(`${baseMessage}${requestId}`);
-          error.transient = transientError;
-          error.statusCode = statusCode;
-          throw error;
-        }
-
-        return payload;
-      };
-      
-      const minFallbackConsistencyScore = 0.35;
-      const minFallbackConsistencyScoreWithStrongAnchors = 0.18;
-
-      for (let i = 0; i < AUTO_BEST_RESULT_VARIANT_COUNT; i++) {
-        let data = null;
-        let consistency = { isConsistent: true, score: 1, matchedTokens: [], expectedTokens: [] };
-        const maxConsistencyAttempts = AUTO_BEST_RESULT_MAX_CONSISTENCY_ATTEMPTS;
-        let bestCandidate = null;
-        let safeMode = false;
-        let negativePromptUsed = '';
-        let finalPromptUsed = '';
-        let promptSectionsUsed = null;
-        let promptTraceUsed = null;
-        let consistencyProfileUsed = null;
-
-        for (let attempt = 0; attempt < maxConsistencyAttempts; attempt += 1) {
-          const { prompt: imagePrompt, negativePrompt, promptSections, metadata } = buildIllustrationPrompt({
-            spec: currentProject.visualIdentitySpec,
-            page,
-            template: page.template,
-            pageText,
-            sceneDescription: scene,
-            continuityContext: [
-              continuityContext,
-              `Variant ${i + 1} for page ${page.number}.`,
-              attempt > 0 ? `Consistency retry attempt ${attempt + 1}/${maxConsistencyAttempts}.` : '',
-              safeMode ? 'Safety mode enabled: child-friendly, fully clothed, no violence, no frightening content.' : ''
-            ].filter(Boolean).join(' '),
-            retryForConsistency: attempt > 0,
-            safeMode
-          });
-          negativePromptUsed = negativePrompt;
-          finalPromptUsed = imagePrompt;
-          promptSectionsUsed = promptSections;
-          promptTraceUsed = metadata?.promptTrace || {
-            identityHash: metadata?.identityHash || null
-          };
-          consistencyProfileUsed = metadata?.consistencyAnchors || null;
-
-          let generated;
-          try {
-            generated = await requestGeneratedImage(imagePrompt);
-          } catch (requestError) {
-            const message = String(requestError?.message || '').toLowerCase();
-            const moderationBlocked = Number(requestError?.statusCode) === 400 &&
-              (message.includes('content filter') || message.includes('safety system'));
-
-            if (moderationBlocked && !safeMode) {
-              safeMode = true;
-              console.warn(`[PageEditor] Variant ${i + 1} blocked by safety filter, retrying with safe mode.`);
-            }
-
-            const hasNextAttempt = attempt < maxConsistencyAttempts - 1;
-            console.warn(`[PageEditor] Variant ${i + 1} API error: ${requestError.message}`);
-            if (hasNextAttempt && requestError.transient) {
-              await new Promise((resolve) => setTimeout(resolve, 1500));
-              continue;
-            }
-            if (!hasNextAttempt) {
-              break;
-            }
-            continue;
-          }
-
-          consistency = validateRevisedPromptConsistency({
-            revisedPrompt: generated.revised_prompt,
-            prompt: imagePrompt,
-            promptSections,
-            promptTrace: metadata?.promptTrace || null
-          }, currentProject.visualIdentity);
-          consistencyProfileUsed = consistency;
-
-          if (!bestCandidate || consistency.score > bestCandidate.consistency.score) {
-            bestCandidate = { generated, consistency, prompt: imagePrompt };
-          }
-
-          if (consistency.isConsistent) {
-            data = generated;
-            break;
-          }
-
-          const hasNextAttempt = attempt < maxConsistencyAttempts - 1;
-          const retryLabel = hasNextAttempt ? `retry ${attempt + 2}/${maxConsistencyAttempts}` : 'no retry left';
-          const anchorDebug = consistency.anchorExpectedTokens?.length
-            ? `anchors ${consistency.anchorMatchedTokens?.length || 0}/${consistency.anchorExpectedTokens.length}`
-            : 'anchors n/a';
-          console.warn(
-            `[PageEditor] Variant ${i + 1} consistency low (score: ${consistency.score.toFixed(2)}, ${anchorDebug}), ${retryLabel}`
-          );
-        }
-
-        const bestAnchorExpected = bestCandidate?.consistency?.anchorExpectedTokens?.length || 0;
-        const bestAnchorMatched = bestCandidate?.consistency?.anchorMatchedTokens?.length || 0;
-        const strongAnchorMatch = bestAnchorExpected > 0 && bestAnchorMatched === bestAnchorExpected;
-        const passesFallbackThreshold = bestCandidate
-          ? (bestCandidate.consistency.score >= minFallbackConsistencyScore ||
-            (strongAnchorMatch && bestCandidate.consistency.score >= minFallbackConsistencyScoreWithStrongAnchors))
-          : false;
-
-        if (!data && bestCandidate && passesFallbackThreshold) {
-          data = bestCandidate.generated;
-          consistency = bestCandidate.consistency;
-          finalPromptUsed = bestCandidate.prompt || finalPromptUsed;
-          console.warn(
-            `[PageEditor] Variant ${i + 1}: accepting best candidate (score ${consistency.score.toFixed(2)}, anchorRequirementMet=${consistency.anchorRequirementMet}).`
-          );
-        }
-
-        if (!data) {
-          console.warn(`[PageEditor] Variant ${i + 1} skipped: no usable image generated.`);
-          continue;
-        }
-
-        variants.push({
-          url: data.url,
-          variantIndex: i,
-          requestId: data.requestId || null,
-          revised_prompt: data.revised_prompt,
-          referenceImageId: data.referenceImageId || currentProject.visualIdentitySpec?.mainCharacter?.referenceImageId || 'main-character-reference',
-          generatedAt: new Date().toISOString(),
-          sceneDescription: scene,
-          dalleParams,
-          negativePromptUsed,
-          promptFinal: finalPromptUsed,
-          promptSections: promptSectionsUsed,
-          promptTrace: promptTraceUsed,
-          consistencyProfile: consistencyProfileUsed,
-          identityHash: promptTraceUsed?.identityHash || null,
-          isConsistent: consistency.isConsistent,
-          consistencyScore: consistency.score,
-          consistencyMatchedTokens: consistency.matchedTokens,
-          consistencyAnchorRequirementMet: consistency.anchorRequirementMet,
-          consistencyAnchorMatchedTokens: consistency.anchorMatchedTokens,
-          consistencyAnchorExpectedTokens: consistency.anchorExpectedTokens,
-          detectedNonNarrativeArtifacts: consistency.detectedNonNarrativeArtifacts || [],
-          inconsistencyReasons: consistency.inconsistencyReasons || []
-        });
-      }
-
-      if (variants.length === 0) {
-        throw new Error('Aucune variante valide générée. Le prompt est probablement bloqué par les filtres de sécurité ou la cohérence est insuffisante.');
-      }
-
-      const bestVariant = selectBestIllustrationVariant(variants);
-      if (!bestVariant) {
-        throw new Error('Impossible de sélectionner automatiquement une illustration exploitable.');
-      }
-
-      await persistIllustrationVariant(bestVariant, variants);
+      await persistIllustrationVariant(pipelineResult.selectedVariant, pipelineResult.variants);
       setIsGeneratingVariants(false);
       setSceneDescription('');
 

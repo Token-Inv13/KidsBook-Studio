@@ -36,11 +36,14 @@ describe('illustrationPromptBuilder', () => {
       sceneDescription: 'sunny forest clearing with warm light',
       continuityContext: 'previous validated page kept the same outfit',
       retryForConsistency: true,
-      safeMode: true
+      safeMode: true,
+      strongReferenceMode: true
     });
 
     expect(result.prompt).toContain('VISUAL IDENTITY LOCK');
     expect(result.prompt).toContain('REFERENCE LOCK');
+    expect(result.prompt).toContain('REFERENCE-DERIVED CHARACTER DESCRIPTION');
+    expect(result.prompt).toContain('STRONG VISUAL MATCH MODE');
     expect(result.prompt).toContain('STYLE LOCK');
     expect(result.prompt).toContain('PALETTE LOCK');
     expect(result.prompt).toContain('SCENE DIRECTION');
@@ -53,6 +56,7 @@ describe('illustrationPromptBuilder', () => {
     expect(result.negativePrompt).toContain('No color palette panel');
     expect(result.negativePrompt).toContain('No UI elements');
     expect(result.metadata.identityHash).toMatch(/^[0-9a-f]{8}$/);
+    expect(result.metadata.strongReferenceMode).toBe(true);
     expect(result.metadata.promptTrace.pageNumber).toBe(4);
     expect(result.metadata.promptTrace.referenceImagePath).toBe('/tmp/reference.png');
     expect(result.metadata.promptSections.templatePrompt).toContain('mixed layout');
@@ -90,6 +94,8 @@ describe('illustrationPromptBuilder', () => {
 
     expect(result.isConsistent).toBe(false);
     expect(result.flags.styleStable).toBe(false);
+    expect(result.explicitDriftPenalties.length).toBeGreaterThan(0);
+    expect(result.weightedPenalty).toBeGreaterThan(0.3);
     expect(result.score).toBeLessThan(0.55);
   });
 

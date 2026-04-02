@@ -46,6 +46,26 @@ const NON_NARRATIVE_ARTIFACT_PATTERNS = [
     key: 'conceptPresentation',
     label: 'layout or concept art presentation',
     pattern: /\b(layout presentation|layout board|concept art presentation|concept board)\b/i
+  },
+  {
+    key: 'calloutLabels',
+    label: 'callout labels',
+    pattern: /\b(labeled callouts?|annotation(?:s)?|annotated arrows?|labeled diagram|notes around the character)\b/i
+  },
+  {
+    key: 'multiPanelComposition',
+    label: 'multi-panel composition',
+    pattern: /\b(triptych|diptych|split screen|three views|front view|side view|back view|pose lineup)\b/i
+  },
+  {
+    key: 'repetitiveComposition',
+    label: 'repetitive composition',
+    pattern: /\b(repeating panels?|repeated poses?|same character repeated|multiple copies of the character|lineup of poses)\b/i
+  },
+  {
+    key: 'nonNarrativeBackdrop',
+    label: 'non-narrative backdrop',
+    pattern: /\b(plain studio backdrop|white seamless background|product backdrop|catalog background|showcase board)\b/i
   }
 ];
 
@@ -105,9 +125,30 @@ const buildReferenceLockLine = (mainCharacter) => {
   return [
     'REFERENCE LOCK: use the selected visual identity image as the canonical source for every page.',
     'The main character MUST match the reference image EXACTLY in face, hair, proportions, and style.',
+    'The character MUST be visually identical to the reference image.',
+    'Use the same face structure, same eyes, same proportions, same hairstyle silhouette, and same outfit identity.',
+    'Do not create a new version of the character.',
+    'This is not a reinterpretation.',
     'Do NOT reinterpret or redesign the character.',
     'This is the SAME character, not a variation.'
   ].join(' ');
+};
+
+const buildReferenceDerivedDescriptionLine = (mainCharacter) => {
+  const referenceDerivedFragments = [
+    mainCharacter?.referencePrompt,
+    mainCharacter?.appearance,
+    mainCharacter?.description,
+    mainCharacter?.clothing
+  ]
+    .map((value) => toShortText(value, 260))
+    .filter(Boolean);
+
+  if (referenceDerivedFragments.length === 0) {
+    return '';
+  }
+
+  return `REFERENCE-DERIVED CHARACTER DESCRIPTION: ${referenceDerivedFragments.join(' | ')}. Preserve these reference-derived traits exactly.`;
 };
 
 const buildSafetyLine = (safeMode) => {
@@ -169,6 +210,57 @@ const extractWeightedMatches = (expectedTokens, revisedTokenSet) => {
     matchedTokens,
     score
   };
+};
+
+const explicitDriftPenaltyRules = [
+  {
+    key: 'faceDrift',
+    label: 'face drift',
+    pattern: /\b(different face|new face|changed face|older face|younger face)\b/i,
+    penalty: 0.35
+  },
+  {
+    key: 'hairDrift',
+    label: 'hair drift',
+    pattern: /\b(different hair|new hairstyle|different hairstyle|blue hair|green hair|purple hair)\b/i,
+    penalty: 0.3
+  },
+  {
+    key: 'styleDrift',
+    label: 'style drift',
+    pattern: /\b(photorealistic|3d render|semi 3d|anime style|oil painting|comic book style)\b/i,
+    penalty: 0.3
+  },
+  {
+    key: 'parasiteElements',
+    label: 'parasite elements',
+    pattern: /\b(text|logo|watermark|palette chart|character sheet|concept board|ui elements?)\b/i,
+    penalty: 0.4
+  }
+];
+
+const getExplicitDriftPenalties = (value) => {
+  const normalized = toCleanString(value);
+  if (!normalized) {
+    return [];
+  }
+
+  return explicitDriftPenaltyRules.reduce((matches, rule) => {
+    const match = normalized.match(rule.pattern);
+    if (!match) {
+      return matches;
+    }
+
+    return [
+      ...matches,
+      {
+        key: rule.key,
+        label: rule.label,
+        match: match[0],
+        penalty: rule.penalty
+      }
+    ];
+  }, []);
 };
 
 const getCharacterIdentityTokens = (character) => {
@@ -260,7 +352,8 @@ export const buildIllustrationPrompt = ({
   continuityContext = '',
   additionalContext = '',
   retryForConsistency = false,
-  safeMode = false
+  safeMode = false,
+  strongReferenceMode = false
 }) => {
   if (!spec) {
     throw new Error('Visual identity spec is required');
@@ -273,12 +366,18 @@ export const buildIllustrationPrompt = ({
   const templateInstructions = getTemplateInstructions(template || page?.template);
   const continuityLine = buildContinuityLine(continuityContext, retryForConsistency);
   const referenceLine = buildReferenceLockLine(mainCharacter);
+  const referenceDerivedDescription = buildReferenceDerivedDescriptionLine(mainCharacter);
   const safetyLine = buildSafetyLine(safeMode);
   const finalIllustrationPrompt = buildFinalIllustrationLine();
   const negativeConstraintPrompt = buildGlobalNegativeConstraintLine();
+  const strongReferenceLine = strongReferenceMode
+    ? 'STRONG VISUAL MATCH MODE: treat the reference image as a hard visual constraint. Keep the exact same face geometry, eye shape, hair silhouette, outfit silhouette, and body proportions. Reject any redesign, age shift, style shift, parasite element, or non-narrative composition.'
+    : '';
   const promptOrder = [
     'invariantPrompt',
     'referencePrompt',
+    'referenceDerivedDescription',
+    'strongReferencePrompt',
     'stylePrompt',
     'palettePrompt',
     'sceneGuardPrompt',
@@ -296,6 +395,8 @@ export const buildIllustrationPrompt = ({
   const promptSections = {
     invariantPrompt: profile.promptSections?.invariantPrompt || '',
     referencePrompt: profile.promptSections?.referencePrompt || referenceLine,
+    referenceDerivedDescription,
+    strongReferencePrompt: strongReferenceLine,
     stylePrompt: profile.promptSections?.stylePrompt || '',
     palettePrompt: profile.promptSections?.palettePrompt || '',
     sceneGuardPrompt: profile.promptSections?.sceneGuardPrompt || '',
@@ -317,6 +418,8 @@ export const buildIllustrationPrompt = ({
   const prompt = combinePromptSections([
     promptSections.invariantPrompt,
     promptSections.referencePrompt,
+    promptSections.referenceDerivedDescription,
+    promptSections.strongReferencePrompt,
     promptSections.stylePrompt,
     promptSections.palettePrompt,
     promptSections.sceneGuardPrompt,
@@ -351,6 +454,7 @@ export const buildIllustrationPrompt = ({
         mainCharacter.referencePrompt
       ].filter(Boolean).join(' ')).slice(0, 12),
       retryForConsistency,
+      strongReferenceMode,
       generatedAt: new Date().toISOString(),
       identityHash: profile.identityHash,
       promptSections,
@@ -378,12 +482,14 @@ export const validateRevisedPromptConsistency = (input, visualIdentity) => {
   const fallback = {
     isConsistent: true,
     score: 1,
+    weightedPenalty: 0,
     anchorRequirementMet: true,
     anchorMatchedTokens: [],
     anchorExpectedTokens: [],
     matchedTokens: [],
     expectedTokens: [],
     detectedNonNarrativeArtifacts: [],
+    explicitDriftPenalties: [],
     inconsistencyReasons: [],
     groupScores: {},
     flags: {}
@@ -431,9 +537,14 @@ export const validateRevisedPromptConsistency = (input, visualIdentity) => {
   }, 0);
   const detectedNonNarrativeArtifacts = detectNonNarrativeArtifactPatterns(revisedPrompt);
   const hasNonNarrativeArtifacts = detectedNonNarrativeArtifacts.length > 0;
-  const score = hasNonNarrativeArtifacts
-    ? Math.min(rawScore, 0.1)
-    : rawScore;
+  const explicitDriftPenalties = getExplicitDriftPenalties(revisedPrompt);
+  const weightedPenalty = explicitDriftPenalties.reduce((sum, entry) => sum + entry.penalty, 0)
+    + (hasNonNarrativeArtifacts ? Math.max(0.45, detectedNonNarrativeArtifacts.length * 0.18) : 0)
+    + (groupScores.faceHair.score < 0.45 ? 0.32 : 0)
+    + (groupScores.clothing.score < 0.2 && identityTokens.clothingTokens.length > 0 ? 0.12 : 0)
+    + (groupScores.style.score < 0.2 && styleTokens.length > 0 ? 0.22 : 0)
+    + (groupScores.palette.score < 0.2 && paletteTokens.length > 0 ? 0.12 : 0);
+  const score = Math.max(0, rawScore - weightedPenalty);
 
   const anchorExpectedTokens = [
     ...profile.consistencyAnchors?.faceHair || [],
@@ -471,20 +582,27 @@ export const validateRevisedPromptConsistency = (input, visualIdentity) => {
   const inconsistencyReasons = detectedNonNarrativeArtifacts.map((artifact) => {
     return `Detected ${artifact.label} pattern in revised prompt: "${artifact.match}"`;
   });
+  explicitDriftPenalties.forEach((entry) => {
+    inconsistencyReasons.push(`Detected ${entry.label} signal in revised prompt: "${entry.match}"`);
+  });
 
   return {
-    isConsistent: score >= 0.55
+    isConsistent: score >= 0.68
       && flags.faceSimilarityProxy
+      && flags.clothingStable
       && flags.styleAdherence
       && flags.paletteAdherence
-      && flags.finalIllustrationPresentation,
+      && flags.finalIllustrationPresentation
+      && explicitDriftPenalties.length === 0,
     score,
+    weightedPenalty,
     anchorRequirementMet,
     anchorMatchedTokens,
     anchorExpectedTokens,
     matchedTokens: combinedMatchedTokens,
     expectedTokens: combinedExpectedTokens,
     detectedNonNarrativeArtifacts,
+    explicitDriftPenalties,
     inconsistencyReasons,
     groupScores,
     flags,

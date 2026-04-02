@@ -1,21 +1,13 @@
 ﻿import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useApp } from '../context/AppContext';
 import { Wand2, Play, Pause, RotateCcw, CheckCircle, XCircle, Clock, AlertCircle, RefreshCw, ExternalLink, Image, Info, X } from 'lucide-react';
-import { validateRevisedPromptConsistency } from '../utils/imagePromptBuilder';
-import { buildSceneDescription } from '../utils/sceneBuilder';
-import { getRecommendedDalleParams } from '../utils/imageRatioCalculator';
 import illustrationQueue from '../utils/illustrationQueue';
 import ImageVariantSelector from './ImageVariantSelector';
 import { resolvePageImageUrl } from '../utils/imageUrlResolver';
 import { getDynamicTableHeight, getVirtualWindow, shouldUseVirtualization } from '../utils/illustrationsListLayout';
-import { buildIllustrationPrompt } from '../utils/illustrationPromptBuilder';
-import {
-  AUTO_BEST_RESULT_MAX_BATCH_RETRIES,
-  AUTO_BEST_RESULT_MAX_CONSISTENCY_ATTEMPTS
-} from '../utils/illustrationAutoPipeline';
 import { validateVisualIdentitySpec } from '../utils/visualIdentitySpec';
-import { stableHash } from '../utils/hash';
 import { finalizePageIllustrationSelection } from '../utils/illustrationPersistence';
+import { generateIllustrationWithAutoPipeline } from '../utils/illustrationGenerationPipeline';
 
 /**
  * IllustrationsManager Component
@@ -107,7 +99,6 @@ function IllustrationsManager({ onOpenPage, onNavigateToCharacters }) {
   const displayedIdentityErrors = identitySpecErrors.length > 0
     ? identitySpecErrors
     : ['Identite visuelle non validee.'];
-  const batchRetryIdentityLockLine = 'IMPORTANT: keep the main character identical to the official reference (face, hair, outfit).';
 
   useEffect(() => {
     const onResize = () => setViewportHeight(window.innerHeight);
@@ -271,295 +262,34 @@ function IllustrationsManager({ onOpenPage, onNavigateToCharacters }) {
     if (!specValidation.ok) {
       throw new Error(`visualIdentitySpec invalide: ${specValidation.errors.join(' | ')}`);
     }
-    const identityHash = stableHash(currentProject.visualIdentitySpec);
-    const identityVersion = currentProject.visualIdentitySpec?.version || null;
-
-    // Get page text - check if textBlocks exists and is an array
-    if (!page.textBlocks || !Array.isArray(page.textBlocks)) {
-      throw new Error(`Page ${page.number} n'a pas de blocs de texte`);
-    }
-
-    const pageText = page.textBlocks
-      .filter(b => b && b.content)
-      .map(b => b.content)
-      .join(' ')
-      .trim();
-      
-    if (!pageText || pageText.length < 10) {
-      throw new Error(`Page ${page.number} n'a pas assez de texte (minimum 10 caractères)`);
-    }
-
-    // Build scene description
-    const scene = await buildSceneDescription({
-      pageText,
-      bookSummary: currentProject.summary || currentProject.description,
-      characters: currentProject.characters || [],
-      targetAge: currentProject.targetAge,
-      openaiServiceUrl
+    const pipelineResult = await generateIllustrationWithAutoPipeline({
+      currentProject,
+      page,
+      openaiServiceUrl,
+      mode: 'batch'
     });
 
-    // Generate single variant for batch mode (to save time/cost)
-    const dalleParams = getRecommendedDalleParams(page, currentProject.bookFormat || currentProject.format || '8x10');
-    const previousReferencePrompt = (currentProject.pages || [])
-      .filter((candidate) => (candidate.number || 0) < (page.number || 0))
-      .sort((a, b) => (b.number || 0) - (a.number || 0))
-      .map((candidate) => candidate?.illustration?.revised_prompt || candidate?.illustrationPrompt)
-      .find(Boolean);
-    const continuityContext = previousReferencePrompt
-      ? `Continuity reference from previous validated page: ${String(previousReferencePrompt).replace(/\s+/g, ' ').trim().slice(0, 420)}`
-      : '';
-    
-    const requestGeneratedImage = async (prompt) => {
-      const referenceCharacter = currentProject.visualIdentitySpec?.mainCharacter || {};
-      const response = await fetch(`${openaiServiceUrl}/api/generate-image`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          prompt,
-          size: dalleParams.size,
-          quality: 'standard',
-          referenceImageId: referenceCharacter.referenceImageId || 'main-character-reference',
-          referenceImagePath: referenceCharacter.referenceImagePath || null
-        })
-      });
-
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        const statusCode = payload.statusCode || response.status;
-        const requestId = payload.requestId ? ` [req:${payload.requestId}]` : '';
-        const baseMessage = payload.error || `Erreur lors de la génération (${statusCode})`;
-        const transientError = statusCode >= 500 || statusCode === 429;
-        const error = new Error(`${baseMessage}${requestId}`);
-        error.transient = transientError;
-        error.statusCode = statusCode;
-        throw error;
-      }
-
-      return payload;
-    };
-
-    const maxBatchRetries = AUTO_BEST_RESULT_MAX_BATCH_RETRIES;
-    const maxConsistencyAttempts = AUTO_BEST_RESULT_MAX_CONSISTENCY_ATTEMPTS;
-    const minFallbackConsistencyScore = 0.35;
-    const minFallbackConsistencyScoreWithStrongAnchors = 0.18;
-    const attempts = [];
-
-    let data = null;
-    let consistency = { isConsistent: true, score: 1, matchedTokens: [], expectedTokens: [] };
-    let negativePromptUsed = '';
-    let finalPromptUsed = '';
-    let promptSectionsUsed = null;
-    let promptTraceUsed = null;
-    let consistencyProfileUsed = null;
-    let lastBatchError = null;
-
-    const generateWithConsistency = async (batchRetryIndex) => {
-      let candidateData = null;
-      let candidateConsistency = { isConsistent: true, score: 1, matchedTokens: [], expectedTokens: [] };
-      let bestCandidate = null;
-      let lastRequestError = null;
-      let safeMode = false;
-      let candidateNegativePrompt = '';
-      let candidateFinalPrompt = '';
-
-      for (let consistencyAttempt = 0; consistencyAttempt < maxConsistencyAttempts; consistencyAttempt += 1) {
-        const { prompt: imagePrompt, negativePrompt, promptSections, metadata } = buildIllustrationPrompt({
-          spec: currentProject.visualIdentitySpec,
-          page,
-          template: page.template,
-          pageText,
-          sceneDescription: scene,
-          continuityContext: [
-            continuityContext,
-            batchRetryIndex > 0 ? batchRetryIdentityLockLine : '',
-            consistencyAttempt > 0 ? `Consistency retry attempt ${consistencyAttempt + 1}/${maxConsistencyAttempts}.` : '',
-            safeMode ? 'Safety mode enabled: child-friendly, fully clothed, no violence, no frightening content.' : ''
-          ].filter(Boolean).join(' '),
-          retryForConsistency: batchRetryIndex > 0 || consistencyAttempt > 0,
-          safeMode
-        });
-        candidateNegativePrompt = negativePrompt;
-        candidateFinalPrompt = imagePrompt;
-        promptSectionsUsed = promptSections;
-        promptTraceUsed = metadata?.promptTrace || {
-          identityHash: metadata?.identityHash || null
-        };
-        consistencyProfileUsed = metadata?.consistencyAnchors || null;
-
-        let generated;
-        try {
-          generated = await requestGeneratedImage(imagePrompt);
-        } catch (requestError) {
-          lastRequestError = requestError;
-          const hasNextConsistencyAttempt = consistencyAttempt < maxConsistencyAttempts - 1;
-          const message = String(requestError?.message || '').toLowerCase();
-          const moderationBlocked = Number(requestError?.statusCode) === 400 &&
-            (message.includes('content filter') || message.includes('safety system'));
-
-          if (moderationBlocked && !safeMode) {
-            safeMode = true;
-            console.warn(`[IllustrationsManager] Safety filter triggered on page ${page.number}, retrying with safe mode prompt constraints.`);
-          }
-
-          console.warn(
-            `[IllustrationsManager] API image generation failed for page ${page.number} (consistency attempt ${consistencyAttempt + 1}/${maxConsistencyAttempts}): ${requestError.message}`
-          );
-          if (hasNextConsistencyAttempt && requestError.transient) {
-            await new Promise((resolve) => setTimeout(resolve, 1500));
-            continue;
-          }
-          if (!hasNextConsistencyAttempt) {
-            break;
-          }
-          continue;
-        }
-
-        candidateConsistency = validateRevisedPromptConsistency({
-          revisedPrompt: generated.revised_prompt,
-          prompt: imagePrompt,
-          promptSections,
-          promptTrace: metadata?.promptTrace || null
-        }, currentProject.visualIdentity);
-        consistencyProfileUsed = candidateConsistency;
-
-        if (!bestCandidate || candidateConsistency.score > bestCandidate.consistency.score) {
-          bestCandidate = { generated, consistency: candidateConsistency, prompt: imagePrompt, negativePrompt };
-        }
-
-        if (candidateConsistency.isConsistent) {
-          candidateData = generated;
-          break;
-        }
-
-        const hasNextConsistencyAttempt = consistencyAttempt < maxConsistencyAttempts - 1;
-        const retryLabel = hasNextConsistencyAttempt ? `retry ${consistencyAttempt + 2}/${maxConsistencyAttempts}` : 'no retry left';
-        const anchorDebug = candidateConsistency.anchorExpectedTokens?.length
-          ? `anchors ${candidateConsistency.anchorMatchedTokens?.length || 0}/${candidateConsistency.anchorExpectedTokens.length}`
-          : 'anchors n/a';
-        console.warn(
-          `[IllustrationsManager] Consistency check low for page ${page.number} (score: ${candidateConsistency.score.toFixed(2)}, ${anchorDebug}), ${retryLabel}`
-        );
-      }
-
-      const bestAnchorExpected = bestCandidate?.consistency?.anchorExpectedTokens?.length || 0;
-      const bestAnchorMatched = bestCandidate?.consistency?.anchorMatchedTokens?.length || 0;
-      const strongAnchorMatch = bestAnchorExpected > 0 && bestAnchorMatched === bestAnchorExpected;
-      const passesFallbackThreshold = bestCandidate
-        ? (bestCandidate.consistency.score >= minFallbackConsistencyScore ||
-          (strongAnchorMatch && bestCandidate.consistency.score >= minFallbackConsistencyScoreWithStrongAnchors))
-        : false;
-
-      if (!candidateData && bestCandidate && passesFallbackThreshold) {
-        candidateData = bestCandidate.generated;
-        candidateConsistency = bestCandidate.consistency;
-        candidateFinalPrompt = bestCandidate.prompt || candidateFinalPrompt;
-        candidateNegativePrompt = bestCandidate.negativePrompt || candidateNegativePrompt;
-        const anchorDebug = candidateConsistency.anchorExpectedTokens?.length
-          ? `anchors ${candidateConsistency.anchorMatchedTokens?.length || 0}/${candidateConsistency.anchorExpectedTokens.length}`
-          : 'anchors n/a';
-        console.warn(
-          `[IllustrationsManager] Accepting best available generation for page ${page.number} despite low consistency score (${candidateConsistency.score.toFixed(2)}, ${anchorDebug}, anchorRequirementMet=${candidateConsistency.anchorRequirementMet}).`
-        );
-      }
-
-      if (!candidateData) {
-        throw lastRequestError || new Error(
-          `Aucune image suffisamment cohérente générée pour la page ${page.number} (score minimal requis: ${minFallbackConsistencyScore}, ou ${minFallbackConsistencyScoreWithStrongAnchors} avec anchors forts).`
-        );
-      }
-
-      return {
-        data: candidateData,
-        consistency: candidateConsistency,
-        negativePromptUsed: candidateNegativePrompt,
-        finalPromptUsed: candidateFinalPrompt,
-        promptSectionsUsed,
-        promptTraceUsed,
-        consistencyProfileUsed
-      };
-    };
-
-    for (let batchAttempt = 1; batchAttempt <= maxBatchRetries + 1; batchAttempt += 1) {
-      try {
-        const generated = await generateWithConsistency(batchAttempt - 1);
-        data = generated.data;
-        consistency = generated.consistency;
-        negativePromptUsed = generated.negativePromptUsed;
-        finalPromptUsed = generated.finalPromptUsed;
-        promptSectionsUsed = generated.promptSectionsUsed;
-        promptTraceUsed = generated.promptTraceUsed;
-        consistencyProfileUsed = generated.consistencyProfileUsed;
-
-        attempts.push({ attempt: batchAttempt, status: 'success' });
-        break;
-      } catch (batchError) {
-        lastBatchError = batchError;
-        attempts.push({
-          attempt: batchAttempt,
-          status: 'failed',
-          error: batchError?.message || 'Unknown error'
-        });
-        const hasRetryLeft = batchAttempt <= maxBatchRetries;
-        console.warn(
-          `[IllustrationsManager] Batch attempt ${batchAttempt}/${maxBatchRetries + 1} failed for page ${page.number}: ${batchError.message}`
-        );
-        if (!hasRetryLeft) {
-          break;
-        }
-      }
-    }
-
-    if (!data) {
-      throw lastBatchError || new Error(`Echec final de generation pour la page ${page.number}`);
-    }
-
-      const selectedVariant = {
-        url: data.url,
-        requestId: data.requestId || null,
-        sceneDescription: scene,
-        revised_prompt: data.revised_prompt,
-        referenceImageId: data.referenceImageId || currentProject.visualIdentitySpec?.mainCharacter?.referenceImageId || 'main-character-reference',
-        promptFinal: finalPromptUsed,
-        consistencyScore: consistency.score,
-        consistencyMatchedTokens: consistency.matchedTokens,
-      consistencyAnchorRequirementMet: consistency.anchorRequirementMet,
-      consistencyAnchorMatchedTokens: consistency.anchorMatchedTokens,
-      consistencyAnchorExpectedTokens: consistency.anchorExpectedTokens,
-      negativePromptUsed,
-      promptSections: promptSectionsUsed,
-      promptTrace: promptTraceUsed,
-      consistencyProfile: consistencyProfileUsed,
-      identityHash: promptTraceUsed?.identityHash || identityHash || null,
-      isConsistent: consistency.isConsistent,
-      detectedNonNarrativeArtifacts: consistency.detectedNonNarrativeArtifacts || [],
-      inconsistencyReasons: consistency.inconsistencyReasons || [],
-      variantIndex: 0,
-      dalleParams,
-      batchGenerated: true,
+    const selectedVariant = pipelineResult.selectedVariant;
+    const generationMeta = {
+      requestId: selectedVariant.requestId || null,
+      promptFinal: selectedVariant.promptFinal || null,
+      revisedPrompt: selectedVariant.revised_prompt || '',
+      createdAt: selectedVariant.generatedAt || new Date().toISOString(),
+      model: null,
+      size: pipelineResult.dalleParams.size,
+      quality: 'standard',
+      identityHash: selectedVariant.identityHash || pipelineResult.identityHash || null,
+      identityVersion: pipelineResult.identityVersion || null,
+      referenceImageId: selectedVariant.referenceImageId || currentProject.visualIdentitySpec?.mainCharacter?.referenceImageId || 'main-character-reference',
+      promptSections: selectedVariant.promptSections || null,
+      promptTrace: selectedVariant.promptTrace || null,
+      consistencyProfile: selectedVariant.consistencyProfile || null,
+      attempts: pipelineResult.attempts,
+      variants: pipelineResult.variants,
+      selectionMode: 'auto-best-result',
       autoSelected: true,
-      autoSelectedVariantIndex: 0,
-      selectionMode: 'auto-best-result'
-    };
-
-      const generationMeta = {
-        requestId: data.requestId || null,
-        promptFinal: finalPromptUsed,
-        revisedPrompt: data.revised_prompt || '',
-        createdAt: new Date().toISOString(),
-        model: data.model || null,
-        size: dalleParams.size,
-        quality: 'standard',
-        identityHash: promptTraceUsed?.identityHash || identityHash || null,
-        identityVersion,
-        referenceImageId: data.referenceImageId || currentProject.visualIdentitySpec?.mainCharacter?.referenceImageId || 'main-character-reference',
-        promptSections: promptSectionsUsed,
-        promptTrace: promptTraceUsed,
-        consistencyProfile: consistencyProfileUsed,
-        attempts,
-        variants: [selectedVariant],
-        selectionMode: 'auto-best-result',
-        autoSelected: true,
-        autoSelectedVariantIndex: 0
+      autoSelectedVariantIndex: selectedVariant.autoSelectedVariantIndex ?? selectedVariant.variantIndex ?? 0,
+      pipeline: pipelineResult.pipeline
     };
 
     console.log('[IllustrationsManager] Persisting final illustration for page', page.number);

@@ -1,9 +1,26 @@
-export const AUTO_BEST_RESULT_VARIANT_COUNT = 4;
+export const AUTO_BEST_RESULT_VARIANT_COUNT = 3;
 export const AUTO_BEST_RESULT_MAX_CONSISTENCY_ATTEMPTS = 3;
 export const AUTO_BEST_RESULT_MAX_BATCH_RETRIES = 1;
+export const AUTO_BEST_RESULT_PASS1_BATCH_CANDIDATE_COUNT = 2;
+export const AUTO_BEST_RESULT_PASS2_BATCH_CANDIDATE_COUNT = 2;
+export const AUTO_BEST_RESULT_PASS2_PAGE_CANDIDATE_COUNT = 2;
+export const AUTO_BEST_RESULT_PASS1_ACCEPTANCE_SCORE = 0.74;
+export const AUTO_BEST_RESULT_PASS2_ACCEPTANCE_SCORE = 0.68;
+export const AUTO_BEST_RESULT_MIN_FACE_SCORE = 0.52;
+export const AUTO_BEST_RESULT_MIN_STYLE_SCORE = 0.3;
+export const AUTO_BEST_RESULT_MIN_PALETTE_SCORE = 0.3;
+export const AUTO_BEST_RESULT_MIN_CLOTHING_SCORE = 0.3;
 
 const getConsistencyScore = (variant) => {
   return Number.isFinite(variant?.consistencyScore) ? variant.consistencyScore : Number.NEGATIVE_INFINITY;
+};
+
+const getWeightedPenalty = (variant) => {
+  return Number.isFinite(variant?.weightedPenalty)
+    ? variant.weightedPenalty
+    : Number.isFinite(variant?.consistencyProfile?.weightedPenalty)
+      ? variant.consistencyProfile.weightedPenalty
+      : 0;
 };
 
 const getArtifactCount = (variant) => {
@@ -58,6 +75,10 @@ export const rankIllustrationVariants = (variants = []) => {
     .sort((left, right) => {
       if (isConsistent(left) !== isConsistent(right)) {
         return Number(isConsistent(right)) - Number(isConsistent(left));
+      }
+
+      if (getWeightedPenalty(left) !== getWeightedPenalty(right)) {
+        return getWeightedPenalty(left) - getWeightedPenalty(right);
       }
 
       if (getArtifactCount(left) !== getArtifactCount(right)) {
