@@ -582,10 +582,16 @@ export const validateRevisedPromptConsistency = (input, visualIdentity) => {
   const detectedNonNarrativeArtifacts = detectNonNarrativeArtifactPatterns(revisedPrompt);
   const hasNonNarrativeArtifacts = detectedNonNarrativeArtifacts.length > 0;
   const hardRejectedArtifacts = getHardRejectedArtifacts(detectedNonNarrativeArtifacts);
-  const hardRejected = hardRejectedArtifacts.length > 0;
+  const hardRejectSeverity = hardRejectedArtifacts.length >= 2
+    || (hardRejectedArtifacts.length >= 1 && detectedNonNarrativeArtifacts.length >= 3)
+    ? 'strong'
+    : hardRejectedArtifacts.length >= 1
+      ? 'penalized'
+      : 'none';
+  const hardRejected = hardRejectSeverity === 'strong';
   const explicitDriftPenalties = getExplicitDriftPenalties(revisedPrompt);
   const weightedPenalty = explicitDriftPenalties.reduce((sum, entry) => sum + entry.penalty, 0)
-    + (hardRejected ? 1.1 : 0)
+    + (hardRejected ? 1.1 : hardRejectSeverity === 'penalized' ? 0.52 : 0)
     + (hasNonNarrativeArtifacts ? Math.max(0.55, detectedNonNarrativeArtifacts.length * 0.2) : 0)
     + (groupScores.faceHair.score < 0.55 ? 0.42 : 0)
     + (groupScores.faceHair.score < 0.4 ? 0.24 : 0)
@@ -650,6 +656,7 @@ export const validateRevisedPromptConsistency = (input, visualIdentity) => {
     score,
     weightedPenalty,
     hardRejected,
+    hardRejectSeverity,
     hardRejectedArtifacts,
     anchorRequirementMet,
     anchorMatchedTokens,

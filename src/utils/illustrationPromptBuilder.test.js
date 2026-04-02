@@ -128,4 +128,23 @@ describe('illustrationPromptBuilder', () => {
     ]));
     expect(result.score).toBeLessThanOrEqual(0.1);
   });
+
+  test('keeps a single severe artifact fallbackable with a strong penalty instead of a total hard reject', () => {
+    const result = validateRevisedPromptConsistency(
+      {
+        revisedPrompt: 'Mia round face freckles brown bob haircut yellow raincoat soft watercolor illustration with a palette chart',
+        prompt: 'REFERENCE LOCK: use the selected visual identity image as the canonical visual anchor for every page.'
+      },
+      {
+        ...spec,
+        mainCharacter: spec.mainCharacter,
+        artStyle: spec.artStyle
+      }
+    );
+
+    expect(result.flags.parasiteElementsDetected).toBe(true);
+    expect(result.hardRejectSeverity).toBe('penalized');
+    expect(result.hardRejected).toBe(false);
+    expect(result.weightedPenalty).toBeGreaterThan(0.5);
+  });
 });

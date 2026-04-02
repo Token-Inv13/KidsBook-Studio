@@ -119,6 +119,9 @@ export const buildIllustrationSelectionState = ({
     batchGenerated: Boolean(variant?.batchGenerated),
     autoSelected: Boolean(variant?.autoSelected ?? generationMeta?.autoSelected),
     selectionMode: generationMeta?.selectionMode || variant?.selectionMode || null,
+    fallbackAccepted: Boolean(generationMeta?.fallbackAccepted ?? variant?.fallbackAccepted),
+    fallbackReason: generationMeta?.fallbackReason || variant?.fallbackReason || null,
+    finalDecisionType: generationMeta?.finalDecisionType || variant?.finalDecisionType || null,
     autoSelectedVariantIndex: Number.isInteger(generationMeta?.autoSelectedVariantIndex)
       ? generationMeta.autoSelectedVariantIndex
       : (Number.isInteger(variant?.autoSelectedVariantIndex) ? variant.autoSelectedVariantIndex : null),
@@ -199,6 +202,9 @@ export async function finalizePageIllustrationSelection({
     status: 'ready',
     variants: storedVariants,
     selectionMode: generationMeta?.selectionMode || variant?.selectionMode || null,
+    fallbackAccepted: Boolean(generationMeta?.fallbackAccepted ?? variant?.fallbackAccepted),
+    fallbackReason: generationMeta?.fallbackReason || variant?.fallbackReason || null,
+    finalDecisionType: generationMeta?.finalDecisionType || variant?.finalDecisionType || null,
     autoSelected: Boolean(generationMeta?.autoSelected ?? variant?.autoSelected),
     autoSelectedVariantIndex: Number.isInteger(generationMeta?.autoSelectedVariantIndex)
       ? generationMeta.autoSelectedVariantIndex

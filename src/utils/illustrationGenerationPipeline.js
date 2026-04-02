@@ -117,6 +117,38 @@ const shouldEscalateToSafeMode = (candidate, minAcceptanceScore) => {
     || flags.parasiteElementsDetected === true;
 };
 
+const buildFallbackDecision = (variant, reason, { mode, pageNumber, attempts, pipelineVersion }) => {
+  if (!variant) {
+    return null;
+  }
+
+  const decisionType = variant.safeMode ? 'safe-mode-fallback' : 'fallback';
+  const metadata = {
+    fallbackAccepted: true,
+    fallbackReason: reason,
+    finalDecisionType: decisionType
+  };
+
+  console.warn(
+    `[illustrationPipeline] Page ${pageNumber}: ${reason} -> fallback triggered (${decisionType}), batch continues after fallback.`
+  );
+  console.info(
+    `[illustrationPipeline] Page ${pageNumber}: fallback accepted with score=${Number(variant.consistencyScore || 0).toFixed(3)} safeMode=${variant.safeMode ? 'true' : 'false'} mode=${mode}.`
+  );
+
+  return {
+    selectedVariant: {
+      ...variant,
+      ...metadata
+    },
+    fallbackAccepted: true,
+    fallbackReason: reason,
+    finalDecisionType: decisionType,
+    attempts,
+    pipelineVersion
+  };
+};
+
 const normalizeVariant = ({
   generated,
   evaluation,
@@ -153,6 +185,7 @@ const normalizeVariant = ({
   consistencyScore: evaluation.score,
   weightedPenalty: evaluation.weightedPenalty || 0,
   hardRejected: evaluation.hardRejected || false,
+  hardRejectSeverity: evaluation.hardRejectSeverity || 'none',
   hardRejectedArtifacts: evaluation.hardRejectedArtifacts || [],
   consistencyMatchedTokens: evaluation.matchedTokens,
   consistencyAnchorRequirementMet: evaluation.anchorRequirementMet,
@@ -290,7 +323,10 @@ const runPass = async ({
         candidateIndex,
         generator: result.bestVariant?.generatorStrategy?.label || null,
         accepted: result.accepted,
+        fallbackCandidate: !result.accepted,
         score: result.bestVariant?.consistencyScore ?? null,
+        safeMode: Boolean(result.bestVariant?.safeMode),
+        hardRejected: Boolean(result.bestVariant?.hardRejected),
         status: result.accepted ? 'accepted' : 'scored'
       });
     } catch (error) {
@@ -352,6 +388,7 @@ export async function generateIllustrationWithAutoPipeline({
   let finalConstraintBundle = preliminaryBundle;
   const passResults = [];
   let lastError = null;
+  let bestFallbackCandidate = null;
 
   for (let batchAttempt = 0; batchAttempt <= AUTO_BEST_RESULT_MAX_BATCH_RETRIES; batchAttempt += 1) {
     finalConstraintBundle = buildIllustrationConstraintBundle({
@@ -389,6 +426,9 @@ export async function generateIllustrationWithAutoPipeline({
         dalleParams,
         identityHash: finalConstraintBundle.identityHash,
         identityVersion: finalConstraintBundle.spec?.version || null,
+        fallbackAccepted: false,
+        fallbackReason: null,
+        finalDecisionType: 'accepted',
         attempts: passResults.flatMap((result) => result.attempts),
         pipeline: {
           version: '2.5',
@@ -412,6 +452,18 @@ export async function generateIllustrationWithAutoPipeline({
     const finalPass = pass2.bestVariant ? pass2 : pass1.bestVariant ? pass1 : pass2;
     if (finalPass.bestVariant) {
       const variants = finalPass.variants.length > 0 ? finalPass.variants : [finalPass.bestVariant];
+      const currentBestFallback = bestFallbackCandidate?.variant
+        ? selectBestIllustrationVariant([bestFallbackCandidate.variant, finalPass.bestVariant])
+        : finalPass.bestVariant;
+
+      if (currentBestFallback === finalPass.bestVariant) {
+        bestFallbackCandidate = {
+          variant: finalPass.bestVariant,
+          variants,
+          passName: finalPass.passName
+        };
+      }
+
       const selectedVariant = {
         ...finalPass.bestVariant,
         batchGenerated: mode === 'batch',
@@ -423,6 +475,39 @@ export async function generateIllustrationWithAutoPipeline({
       };
 
       if (pass2.accepted || batchAttempt >= AUTO_BEST_RESULT_MAX_BATCH_RETRIES) {
+        if (!pass2.accepted) {
+          const fallbackReason = pass2.variants.length === 0 && pass1.variants.length > 0
+            ? 'safe mode produced no strictly acceptable candidate; reusing least bad pass-1 candidate'
+            : finalPass.bestVariant.safeMode
+              ? 'safe mode fallback accepted'
+              : 'all candidates rejected -> fallback triggered';
+          const fallbackDecision = buildFallbackDecision(finalPass.bestVariant, fallbackReason, {
+            mode,
+            pageNumber: page.number,
+            attempts: passResults.flatMap((result) => result.attempts),
+            pipelineVersion: '2.5'
+          });
+
+          return {
+            selectedVariant: fallbackDecision.selectedVariant,
+            variants,
+            scene: selectedVariant.sceneDescription,
+            dalleParams,
+            identityHash: finalConstraintBundle.identityHash,
+            identityVersion: finalConstraintBundle.spec?.version || null,
+            fallbackAccepted: fallbackDecision.fallbackAccepted,
+            fallbackReason: fallbackDecision.fallbackReason,
+            finalDecisionType: fallbackDecision.finalDecisionType,
+            attempts: fallbackDecision.attempts,
+            pipeline: {
+              version: '2.5',
+              passedIn: finalPass.passName,
+              constraintBundle: summarizeConstraintBundle(finalConstraintBundle),
+              passResults
+            }
+          };
+        }
+
         return {
           selectedVariant,
           variants,
@@ -430,6 +515,9 @@ export async function generateIllustrationWithAutoPipeline({
           dalleParams,
           identityHash: finalConstraintBundle.identityHash,
           identityVersion: finalConstraintBundle.spec?.version || null,
+          fallbackAccepted: false,
+          fallbackReason: null,
+          finalDecisionType: 'accepted',
           attempts: passResults.flatMap((result) => result.attempts),
           pipeline: {
             version: '2.5',
@@ -441,8 +529,39 @@ export async function generateIllustrationWithAutoPipeline({
       }
     }
 
+    if (batchAttempt >= AUTO_BEST_RESULT_MAX_BATCH_RETRIES && bestFallbackCandidate?.variant) {
+      const fallbackReason = bestFallbackCandidate.variant.safeMode
+        ? 'safe mode fallback accepted'
+        : 'all candidates rejected -> fallback triggered';
+      const fallbackDecision = buildFallbackDecision(bestFallbackCandidate.variant, fallbackReason, {
+        mode,
+        pageNumber: page.number,
+        attempts: passResults.flatMap((result) => result.attempts),
+        pipelineVersion: '2.5'
+      });
+
+      return {
+        selectedVariant: fallbackDecision.selectedVariant,
+        variants: bestFallbackCandidate.variants,
+        scene: bestFallbackCandidate.variant.sceneDescription,
+        dalleParams,
+        identityHash: finalConstraintBundle.identityHash,
+        identityVersion: finalConstraintBundle.spec?.version || null,
+        fallbackAccepted: fallbackDecision.fallbackAccepted,
+        fallbackReason: fallbackDecision.fallbackReason,
+        finalDecisionType: fallbackDecision.finalDecisionType,
+        attempts: fallbackDecision.attempts,
+        pipeline: {
+          version: '2.5',
+          passedIn: bestFallbackCandidate.passName,
+          constraintBundle: summarizeConstraintBundle(finalConstraintBundle),
+          passResults
+        }
+      };
+    }
+
     lastError = new Error(`Aucune illustration acceptable générée pour la page ${page.number} après ${batchAttempt + 1} tentative(s) pipeline.`);
   }
 
-  throw lastError || new Error(`Échec final de génération pour la page ${page.number}`);
+  throw lastError || new Error(`?chec final de g?n?ration pour la page ${page.number}`);
 }

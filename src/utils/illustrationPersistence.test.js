@@ -26,6 +26,9 @@ describe('illustrationPersistence', () => {
         quality: 'standard',
         requestId: 'req_123',
         selectionMode: 'auto-best-result',
+        fallbackAccepted: true,
+        fallbackReason: 'all candidates rejected -> fallback triggered',
+        finalDecisionType: 'fallback',
         autoSelectedVariantIndex: 0
       },
       timestamp: '2026-03-09T12:00:00.000Z'
@@ -37,6 +40,9 @@ describe('illustrationPersistence', () => {
     expect(illustration.assetId).toBe('page-illustration:page-1');
     expect(illustration.url).toBe('file:///tmp/page_1.png');
     expect(illustration.selectionMode).toBe('auto-best-result');
+    expect(illustration.fallbackAccepted).toBe(true);
+    expect(illustration.fallbackReason).toBe('all candidates rejected -> fallback triggered');
+    expect(illustration.finalDecisionType).toBe('fallback');
     expect(illustration.autoSelected).toBe(true);
     expect(illustration.variants).toHaveLength(2);
   });

@@ -290,6 +290,9 @@ function IllustrationsManager({ onOpenPage, onNavigateToCharacters }) {
       attempts: pipelineResult.attempts,
       variants: pipelineResult.variants,
       selectionMode: 'auto-best-result',
+      fallbackAccepted: Boolean(pipelineResult.fallbackAccepted ?? selectedVariant.fallbackAccepted),
+      fallbackReason: pipelineResult.fallbackReason || selectedVariant.fallbackReason || null,
+      finalDecisionType: pipelineResult.finalDecisionType || selectedVariant.finalDecisionType || 'accepted',
       autoSelected: true,
       autoSelectedVariantIndex: selectedVariant.autoSelectedVariantIndex ?? selectedVariant.variantIndex ?? 0,
       pipeline: pipelineResult.pipeline
