@@ -37,7 +37,8 @@ describe('illustrationPromptBuilder', () => {
       continuityContext: 'previous validated page kept the same outfit',
       retryForConsistency: true,
       safeMode: true,
-      strongReferenceMode: true
+      strongReferenceMode: true,
+      fragileConsistencyMode: true
     });
 
     expect(result.prompt).toContain('VISUAL IDENTITY LOCK');
@@ -46,6 +47,7 @@ describe('illustrationPromptBuilder', () => {
     expect(result.prompt).toContain('STRONG VISUAL MATCH MODE');
     expect(result.prompt).toContain('STYLE LOCK');
     expect(result.prompt).toContain('PALETTE LOCK');
+    expect(result.prompt).toContain('FRAGILE CASE LOCK');
     expect(result.prompt).toContain('SCENE DIRECTION');
     expect(result.prompt).toContain('PAGE NARRATIVE');
     expect(result.prompt).toContain('FINAL ILLUSTRATION RULE');
@@ -57,6 +59,7 @@ describe('illustrationPromptBuilder', () => {
     expect(result.negativePrompt).toContain('No UI elements');
     expect(result.metadata.identityHash).toMatch(/^[0-9a-f]{8}$/);
     expect(result.metadata.strongReferenceMode).toBe(true);
+    expect(result.metadata.fragileConsistencyMode).toBe(true);
     expect(result.metadata.promptTrace.pageNumber).toBe(4);
     expect(result.metadata.promptTrace.referenceImagePath).toBe('/tmp/reference.png');
     expect(result.metadata.promptSections.templatePrompt).toContain('mixed layout');
@@ -65,7 +68,7 @@ describe('illustrationPromptBuilder', () => {
   test('validateRevisedPromptConsistency rewards stable character and style markers', () => {
     const result = validateRevisedPromptConsistency(
       {
-        revisedPrompt: 'Mia 6-year-old round face freckles brown bob haircut yellow raincoat soft watercolor illustration #F2C14E #4A90E2',
+        revisedPrompt: 'Mia 6-year-old friendly child bright smile round face freckles brown bob haircut yellow raincoat soft watercolor illustration gentle washes children book style #F2C14E #4A90E2',
         prompt: 'REFERENCE LOCK: use the selected visual identity image as the canonical visual anchor for every page. The main character MUST match the reference image EXACTLY in face, hair, proportions, and style.'
       },
       {
@@ -115,6 +118,8 @@ describe('illustrationPromptBuilder', () => {
     expect(result.isConsistent).toBe(false);
     expect(result.flags.finalIllustrationPresentation).toBe(false);
     expect(result.flags.parasiteElementsDetected).toBe(true);
+    expect(result.flags.hardArtifactReject).toBe(true);
+    expect(result.hardRejected).toBe(true);
     expect(result.detectedNonNarrativeArtifacts.map((artifact) => artifact.key)).toEqual(expect.arrayContaining([
       'colorPalettePanel',
       'designSheet',

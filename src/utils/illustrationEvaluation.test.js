@@ -47,8 +47,8 @@ describe('illustrationEvaluation', () => {
       constraintBundle: bundle
     });
 
-    expect(evaluation.evaluationVersion).toBe('2.0');
-    expect(evaluation.componentScores.identity).toBeGreaterThan(0.5);
+    expect(evaluation.evaluationVersion).toBe('2.5');
+    expect(evaluation.componentScores.identity).toBeGreaterThan(0.6);
     expect(evaluation.componentScores.style).toBeGreaterThan(0.2);
     expect(evaluation.componentScores.artifacts).toBeGreaterThan(0.7);
     expect(evaluation.futureVisualPreview.hooks.referenceComparisonAvailable).toBe(false);
@@ -64,8 +64,9 @@ describe('illustrationEvaluation', () => {
     });
 
     expect(evaluation.isConsistent).toBe(false);
+    expect(evaluation.hardRejected).toBe(true);
     expect(evaluation.componentScores.identity).toBeLessThan(0.3);
-    expect(evaluation.componentScores.artifacts).toBeLessThan(0.5);
+    expect(evaluation.componentScores.artifacts).toBe(0);
     expect(evaluation.score).toBeLessThan(0.4);
   });
 });

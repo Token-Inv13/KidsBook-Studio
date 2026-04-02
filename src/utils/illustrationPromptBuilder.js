@@ -5,6 +5,12 @@ const GLOBAL_NEGATIVE_CONSTRAINTS = [
   'No UI elements',
   'No design sheet',
   'No reference board',
+  'No presentation board',
+  'No split layout',
+  'No multi-panel composition',
+  'No grids',
+  'No labels or callouts',
+  'No studio sheet backdrop',
   'No multiple character variations in the same image',
   'No layout or concept art presentation'
 ];
@@ -30,12 +36,12 @@ const NON_NARRATIVE_ARTIFACT_PATTERNS = [
   {
     key: 'referenceBoard',
     label: 'reference board',
-    pattern: /\b(reference board|mood board|inspiration board)\b/i
+    pattern: /\b(reference board|mood board|inspiration board|reference sheet)\b/i
   },
   {
     key: 'gridLayout',
     label: 'grid layout',
-    pattern: /\b(grid|grid layout|panel grid|layout grid)\b/i
+    pattern: /\b(grid|grid layout|panel grid|layout grid|gridded layout)\b/i
   },
   {
     key: 'multipleCharacterVariations',
@@ -45,17 +51,17 @@ const NON_NARRATIVE_ARTIFACT_PATTERNS = [
   {
     key: 'conceptPresentation',
     label: 'layout or concept art presentation',
-    pattern: /\b(layout presentation|layout board|concept art presentation|concept board)\b/i
+    pattern: /\b(layout presentation|layout board|concept art presentation|concept board|presentation board|design presentation)\b/i
   },
   {
     key: 'calloutLabels',
     label: 'callout labels',
-    pattern: /\b(labeled callouts?|annotation(?:s)?|annotated arrows?|labeled diagram|notes around the character)\b/i
+    pattern: /\b(labeled callouts?|annotation(?:s)?|annotated arrows?|labeled diagram|notes around the character|labels?|callouts?)\b/i
   },
   {
     key: 'multiPanelComposition',
     label: 'multi-panel composition',
-    pattern: /\b(triptych|diptych|split screen|three views|front view|side view|back view|pose lineup)\b/i
+    pattern: /\b(triptych|diptych|split screen|split layout|three views|front view|side view|back view|pose lineup|multi-panel|panel composition)\b/i
   },
   {
     key: 'repetitiveComposition',
@@ -65,9 +71,21 @@ const NON_NARRATIVE_ARTIFACT_PATTERNS = [
   {
     key: 'nonNarrativeBackdrop',
     label: 'non-narrative backdrop',
-    pattern: /\b(plain studio backdrop|white seamless background|product backdrop|catalog background|showcase board)\b/i
+    pattern: /\b(plain studio backdrop|white seamless background|product backdrop|catalog background|showcase board|studio sheet|sheet-like composition|backdrop studio)\b/i
   }
 ];
+
+const HARD_REJECT_ARTIFACT_KEYS = new Set([
+  'colorPalettePanel',
+  'uiElements',
+  'designSheet',
+  'referenceBoard',
+  'gridLayout',
+  'conceptPresentation',
+  'calloutLabels',
+  'multiPanelComposition',
+  'nonNarrativeBackdrop'
+]);
 
 const toCleanString = (value) => {
   if (typeof value !== 'string') {
@@ -156,7 +174,21 @@ const buildSafetyLine = (safeMode) => {
     return '';
   }
 
-  return 'SAFETY MODE: child-friendly scene, fully clothed characters, no nudity, no violence, no injury, no frightening content.';
+  return 'SAFETY MODE: child-friendly scene, fully clothed characters, no nudity, no violence, no injury, no frightening content. Prefer a simple readable composition, one clear moment, one consistent protagonist, and fewer interpretive flourishes.';
+};
+
+const buildFragileCaseLine = (fragileConsistencyMode) => {
+  if (!fragileConsistencyMode) {
+    return '';
+  }
+
+  return [
+    'FRAGILE CASE LOCK: prioritize character identity over spectacle or novelty.',
+    'Keep the exact same face, hair silhouette, body proportions, and outfit silhouette as the canonical reference.',
+    'Use a single final-book composition, not a board, sheet, layout, presentation, split screen, or multi-panel image.',
+    'No labels, no callouts, no grids, no UI-like elements, no palette display, no reference-sheet framing.',
+    'Keep the art style and palette tightly locked, with a simple scene interpretation and minimal extra props.'
+  ].join(' ');
 };
 
 const combinePromptSections = (sections) => {
@@ -343,6 +375,10 @@ const detectNonNarrativeArtifactPatterns = (value) => {
   }, []);
 };
 
+const getHardRejectedArtifacts = (artifacts = []) => {
+  return artifacts.filter((artifact) => HARD_REJECT_ARTIFACT_KEYS.has(artifact.key));
+};
+
 export const buildIllustrationPrompt = ({
   spec,
   page,
@@ -353,7 +389,8 @@ export const buildIllustrationPrompt = ({
   additionalContext = '',
   retryForConsistency = false,
   safeMode = false,
-  strongReferenceMode = false
+  strongReferenceMode = false,
+  fragileConsistencyMode = false
 }) => {
   if (!spec) {
     throw new Error('Visual identity spec is required');
@@ -368,6 +405,7 @@ export const buildIllustrationPrompt = ({
   const referenceLine = buildReferenceLockLine(mainCharacter);
   const referenceDerivedDescription = buildReferenceDerivedDescriptionLine(mainCharacter);
   const safetyLine = buildSafetyLine(safeMode);
+  const fragileCaseLine = buildFragileCaseLine(fragileConsistencyMode);
   const finalIllustrationPrompt = buildFinalIllustrationLine();
   const negativeConstraintPrompt = buildGlobalNegativeConstraintLine();
   const strongReferenceLine = strongReferenceMode
@@ -380,6 +418,7 @@ export const buildIllustrationPrompt = ({
     'strongReferencePrompt',
     'stylePrompt',
     'palettePrompt',
+    'fragileConsistencyPrompt',
     'sceneGuardPrompt',
     'pagePrompt',
     'scenePrompt',
@@ -399,6 +438,7 @@ export const buildIllustrationPrompt = ({
     strongReferencePrompt: strongReferenceLine,
     stylePrompt: profile.promptSections?.stylePrompt || '',
     palettePrompt: profile.promptSections?.palettePrompt || '',
+    fragileConsistencyPrompt: fragileCaseLine,
     sceneGuardPrompt: profile.promptSections?.sceneGuardPrompt || '',
     pagePrompt: pageNarrative ? `PAGE NARRATIVE: ${pageNarrative}` : '',
     scenePrompt: sceneText ? `SCENE DIRECTION: ${sceneText}` : '',
@@ -422,6 +462,7 @@ export const buildIllustrationPrompt = ({
     promptSections.strongReferencePrompt,
     promptSections.stylePrompt,
     promptSections.palettePrompt,
+    promptSections.fragileConsistencyPrompt,
     promptSections.sceneGuardPrompt,
     promptSections.pagePrompt,
     promptSections.scenePrompt,
@@ -455,6 +496,7 @@ export const buildIllustrationPrompt = ({
       ].filter(Boolean).join(' ')).slice(0, 12),
       retryForConsistency,
       strongReferenceMode,
+      fragileConsistencyMode,
       generatedAt: new Date().toISOString(),
       identityHash: profile.identityHash,
       promptSections,
@@ -483,6 +525,8 @@ export const validateRevisedPromptConsistency = (input, visualIdentity) => {
     isConsistent: true,
     score: 1,
     weightedPenalty: 0,
+    hardRejected: false,
+    hardRejectedArtifacts: [],
     anchorRequirementMet: true,
     anchorMatchedTokens: [],
     anchorExpectedTokens: [],
@@ -537,12 +581,16 @@ export const validateRevisedPromptConsistency = (input, visualIdentity) => {
   }, 0);
   const detectedNonNarrativeArtifacts = detectNonNarrativeArtifactPatterns(revisedPrompt);
   const hasNonNarrativeArtifacts = detectedNonNarrativeArtifacts.length > 0;
+  const hardRejectedArtifacts = getHardRejectedArtifacts(detectedNonNarrativeArtifacts);
+  const hardRejected = hardRejectedArtifacts.length > 0;
   const explicitDriftPenalties = getExplicitDriftPenalties(revisedPrompt);
   const weightedPenalty = explicitDriftPenalties.reduce((sum, entry) => sum + entry.penalty, 0)
-    + (hasNonNarrativeArtifacts ? Math.max(0.45, detectedNonNarrativeArtifacts.length * 0.18) : 0)
-    + (groupScores.faceHair.score < 0.45 ? 0.32 : 0)
+    + (hardRejected ? 1.1 : 0)
+    + (hasNonNarrativeArtifacts ? Math.max(0.55, detectedNonNarrativeArtifacts.length * 0.2) : 0)
+    + (groupScores.faceHair.score < 0.55 ? 0.42 : 0)
+    + (groupScores.faceHair.score < 0.4 ? 0.24 : 0)
     + (groupScores.clothing.score < 0.2 && identityTokens.clothingTokens.length > 0 ? 0.12 : 0)
-    + (groupScores.style.score < 0.2 && styleTokens.length > 0 ? 0.22 : 0)
+    + (groupScores.style.score < 0.2 && styleTokens.length > 0 ? 0.18 : 0)
     + (groupScores.palette.score < 0.2 && paletteTokens.length > 0 ? 0.12 : 0);
   const score = Math.max(0, rawScore - weightedPenalty);
 
@@ -551,13 +599,13 @@ export const validateRevisedPromptConsistency = (input, visualIdentity) => {
     ...profile.consistencyAnchors?.style || []
   ].filter(Boolean);
   const anchorMatchedTokens = anchorExpectedTokens.filter((token) => revisedTokenSet.includes(token));
-  const anchorRequirementMet = (groupScores.faceHair.score >= 0.5)
+  const anchorRequirementMet = (groupScores.faceHair.score >= 0.55)
     && (styleTokens.length === 0 || groupScores.style.score >= 0.2);
 
   const flags = {
-    faceSimilarityProxy: groupScores.faceHair.score >= 0.45,
-    faceStable: groupScores.faceHair.score >= 0.45,
-    hairstyleStable: groupScores.faceHair.score >= 0.45,
+    faceSimilarityProxy: groupScores.faceHair.score >= 0.55,
+    faceStable: groupScores.faceHair.score >= 0.55,
+    hairstyleStable: groupScores.faceHair.score >= 0.55,
     ageStable: identityTokens.ageTokens.length === 0 || groupScores.age.score >= 0.5,
     clothingStable: identityTokens.clothingTokens.length === 0 || groupScores.clothing.score >= 0.45,
     styleAdherence: styleTokens.length === 0 || groupScores.style.score >= 0.25,
@@ -566,6 +614,7 @@ export const validateRevisedPromptConsistency = (input, visualIdentity) => {
     paletteStable: paletteTokens.length === 0 || groupScores.palette.score >= 0.35,
     finalIllustrationPresentation: !hasNonNarrativeArtifacts,
     parasiteElementsDetected: hasNonNarrativeArtifacts,
+    hardArtifactReject: hardRejected,
     referenceLockPresent: referenceConfigured,
     characterNameStable: identityTokens.nameTokens.length === 0 || groupScores.name.score >= 0.5
   };
@@ -582,12 +631,16 @@ export const validateRevisedPromptConsistency = (input, visualIdentity) => {
   const inconsistencyReasons = detectedNonNarrativeArtifacts.map((artifact) => {
     return `Detected ${artifact.label} pattern in revised prompt: "${artifact.match}"`;
   });
+  hardRejectedArtifacts.forEach((artifact) => {
+    inconsistencyReasons.push(`Hard reject artifact detected: ${artifact.label}`);
+  });
   explicitDriftPenalties.forEach((entry) => {
     inconsistencyReasons.push(`Detected ${entry.label} signal in revised prompt: "${entry.match}"`);
   });
 
   return {
-    isConsistent: score >= 0.68
+    isConsistent: !hardRejected
+      && score >= 0.74
       && flags.faceSimilarityProxy
       && flags.clothingStable
       && flags.styleAdherence
@@ -596,6 +649,8 @@ export const validateRevisedPromptConsistency = (input, visualIdentity) => {
       && explicitDriftPenalties.length === 0,
     score,
     weightedPenalty,
+    hardRejected,
+    hardRejectedArtifacts,
     anchorRequirementMet,
     anchorMatchedTokens,
     anchorExpectedTokens,

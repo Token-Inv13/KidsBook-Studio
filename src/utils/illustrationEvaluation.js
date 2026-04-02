@@ -13,13 +13,15 @@ const buildComponentScores = (consistencyProfile, futureVisualPreview) => {
   const artifactCount = Array.isArray(consistencyProfile?.detectedNonNarrativeArtifacts)
     ? consistencyProfile.detectedNonNarrativeArtifacts.length
     : 0;
+  const hardRejectPenalty = consistencyProfile?.hardRejected ? 1 : 0;
 
   const identityScore = clamp(
-    ((groupScores.faceHair?.score || 0) * 0.55)
-    + ((groupScores.age?.score || 0) * 0.1)
-    + ((groupScores.clothing?.score || 0) * 0.2)
-    + ((groupScores.referenceLock?.score || 0) * 0.15)
+    ((groupScores.faceHair?.score || 0) * 0.64)
+    + ((groupScores.age?.score || 0) * 0.08)
+    + ((groupScores.clothing?.score || 0) * 0.16)
+    + ((groupScores.referenceLock?.score || 0) * 0.12)
     - explicitPenalty
+    - (hardRejectPenalty * 0.45)
   );
   const styleScore = clamp(groupScores.style?.score || 0);
   const paletteScore = clamp(groupScores.palette?.score || 0);
@@ -27,7 +29,9 @@ const buildComponentScores = (consistencyProfile, futureVisualPreview) => {
     ((groupScores.referenceLock?.score || 0) * 0.35)
     + (((futureVisualPreview?.previewScores?.interPageSimilarity) ?? 1) * 0.65)
   );
-  const artifactScore = clamp(1 - Math.min(1, (artifactCount * 0.25) + explicitPenalty + (consistencyProfile?.weightedPenalty || 0) * 0.15));
+  const artifactScore = consistencyProfile?.hardRejected
+    ? 0
+    : clamp(1 - Math.min(1, (artifactCount * 0.3) + explicitPenalty + (consistencyProfile?.weightedPenalty || 0) * 0.18));
 
   return {
     identity: roundScore(identityScore),
@@ -53,19 +57,20 @@ export const evaluateIllustrationCandidate = ({
   }, constraintBundle?.spec);
   const futureVisualPreview = getFutureVisualScoringPreview(constraintBundle, revisedPrompt);
   const componentScores = buildComponentScores(consistencyProfile, futureVisualPreview);
-  const finalScore = clamp(
-    (componentScores.identity * 0.34)
-    + (componentScores.style * 0.18)
-    + (componentScores.palette * 0.12)
-    + (componentScores.continuity * 0.16)
-    + (componentScores.artifacts * 0.2)
+  const baseFinalScore = clamp(
+    (componentScores.identity * 0.5)
+    + (componentScores.style * 0.14)
+    + (componentScores.palette * 0.08)
+    + (componentScores.continuity * 0.12)
+    + (componentScores.artifacts * 0.16)
   );
+  const finalScore = consistencyProfile?.hardRejected ? 0 : baseFinalScore;
 
   return {
     ...consistencyProfile,
     score: roundScore(finalScore),
     componentScores,
     futureVisualPreview,
-    evaluationVersion: '2.0'
+    evaluationVersion: '2.5'
   };
 };

@@ -24,6 +24,7 @@ const createPromptFromBundle = ({
   constraintBundle,
   strategy,
   safeMode,
+  fragileConsistencyMode,
   consistencyAttempt,
   candidateIndex,
   candidateCount,
@@ -49,7 +50,8 @@ const createPromptFromBundle = ({
     additionalContext: buildAdditionalGuidedContext(constraintBundle, strategy),
     retryForConsistency: strategy.retryForConsistency || consistencyAttempt > 0,
     safeMode,
-    strongReferenceMode: strategy.mode !== 'text-only'
+    strongReferenceMode: strategy.mode !== 'text-only',
+    fragileConsistencyMode
   });
 
   return {
@@ -99,6 +101,7 @@ export const prepareGeneratorRequest = ({
   constraintBundle,
   strategy,
   safeMode,
+  fragileConsistencyMode,
   consistencyAttempt,
   candidateIndex,
   candidateCount,
@@ -107,6 +110,7 @@ export const prepareGeneratorRequest = ({
   constraintBundle,
   strategy,
   safeMode,
+  fragileConsistencyMode,
   consistencyAttempt,
   candidateIndex,
   candidateCount,

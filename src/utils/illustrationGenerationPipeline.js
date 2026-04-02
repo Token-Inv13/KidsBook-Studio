@@ -3,6 +3,10 @@ import { buildSceneDescription } from './sceneBuilder';
 import {
   AUTO_BEST_RESULT_MAX_BATCH_RETRIES,
   AUTO_BEST_RESULT_MAX_CONSISTENCY_ATTEMPTS,
+  AUTO_BEST_RESULT_MIN_CLOTHING_SCORE,
+  AUTO_BEST_RESULT_MIN_FACE_SCORE,
+  AUTO_BEST_RESULT_MIN_PALETTE_SCORE,
+  AUTO_BEST_RESULT_MIN_STYLE_SCORE,
   AUTO_BEST_RESULT_PASS1_ACCEPTANCE_SCORE,
   AUTO_BEST_RESULT_PASS1_BATCH_CANDIDATE_COUNT,
   AUTO_BEST_RESULT_PASS2_ACCEPTANCE_SCORE,
@@ -79,18 +83,38 @@ const isCandidateAcceptable = (candidate, minScore) => {
   const evaluation = candidate?.evaluation || {};
   const flags = evaluation?.flags || {};
   const componentScores = evaluation?.componentScores || {};
+  const groupScores = evaluation?.groupScores || {};
 
   return Boolean(candidate?.isConsistent)
+    && evaluation?.hardRejected !== true
     && Number(candidate?.consistencyScore || 0) >= minScore
-    && Number(componentScores.identity || 0) >= 0.5
-    && Number(componentScores.style || 0) >= 0.25
-    && Number(componentScores.palette || 0) >= 0.2
-    && Number(componentScores.artifacts || 0) >= 0.6
+    && Number(componentScores.identity || 0) >= 0.66
+    && Number(componentScores.style || 0) >= AUTO_BEST_RESULT_MIN_STYLE_SCORE
+    && Number(componentScores.palette || 0) >= AUTO_BEST_RESULT_MIN_PALETTE_SCORE
+    && Number(componentScores.artifacts || 0) >= 0.7
+    && Number(groupScores.faceHair?.score || 0) >= AUTO_BEST_RESULT_MIN_FACE_SCORE
+    && Number(groupScores.clothing?.score || 0) >= AUTO_BEST_RESULT_MIN_CLOTHING_SCORE
     && flags.faceStable !== false
     && flags.hairstyleStable !== false
     && flags.styleStable !== false
     && flags.paletteStable !== false
     && flags.parasiteElementsDetected !== true;
+};
+
+const shouldEscalateToSafeMode = (candidate, minAcceptanceScore) => {
+  const evaluation = candidate?.evaluation || {};
+  const componentScores = evaluation?.componentScores || {};
+  const groupScores = evaluation?.groupScores || {};
+  const flags = evaluation?.flags || {};
+
+  return evaluation?.hardRejected === true
+    || Number(candidate?.consistencyScore || 0) < minAcceptanceScore
+    || Number(componentScores.identity || 0) < 0.66
+    || Number(groupScores.faceHair?.score || 0) < AUTO_BEST_RESULT_MIN_FACE_SCORE
+    || Number(groupScores.clothing?.score || 0) < AUTO_BEST_RESULT_MIN_CLOTHING_SCORE
+    || flags.faceStable === false
+    || flags.hairstyleStable === false
+    || flags.parasiteElementsDetected === true;
 };
 
 const normalizeVariant = ({
@@ -128,6 +152,8 @@ const normalizeVariant = ({
   isConsistent: evaluation.isConsistent,
   consistencyScore: evaluation.score,
   weightedPenalty: evaluation.weightedPenalty || 0,
+  hardRejected: evaluation.hardRejected || false,
+  hardRejectedArtifacts: evaluation.hardRejectedArtifacts || [],
   consistencyMatchedTokens: evaluation.matchedTokens,
   consistencyAnchorRequirementMet: evaluation.anchorRequirementMet,
   consistencyAnchorMatchedTokens: evaluation.anchorMatchedTokens,
@@ -159,6 +185,7 @@ const runCandidate = async ({
       constraintBundle,
       strategy,
       safeMode,
+      fragileConsistencyMode: safeMode || passName === 'pass-2' || consistencyAttempt > 0,
       consistencyAttempt,
       candidateIndex,
       candidateCount,
@@ -218,6 +245,10 @@ const runCandidate = async ({
 
     if (isCandidateAcceptable(variant, minAcceptanceScore)) {
       return { bestVariant: variant, accepted: true };
+    }
+
+    if (!safeMode && shouldEscalateToSafeMode(variant, minAcceptanceScore)) {
+      safeMode = true;
     }
   }
 
@@ -360,7 +391,7 @@ export async function generateIllustrationWithAutoPipeline({
         identityVersion: finalConstraintBundle.spec?.version || null,
         attempts: passResults.flatMap((result) => result.attempts),
         pipeline: {
-          version: '2.0',
+          version: '2.5',
           passedIn: 'pass-1',
           constraintBundle: summarizeConstraintBundle(finalConstraintBundle),
           passResults
@@ -401,7 +432,7 @@ export async function generateIllustrationWithAutoPipeline({
           identityVersion: finalConstraintBundle.spec?.version || null,
           attempts: passResults.flatMap((result) => result.attempts),
           pipeline: {
-            version: '2.0',
+            version: '2.5',
             passedIn: pass2.accepted ? 'pass-2' : finalPass.passName,
             constraintBundle: summarizeConstraintBundle(finalConstraintBundle),
             passResults

@@ -6,10 +6,10 @@ export const AUTO_BEST_RESULT_PASS2_BATCH_CANDIDATE_COUNT = 2;
 export const AUTO_BEST_RESULT_PASS2_PAGE_CANDIDATE_COUNT = 2;
 export const AUTO_BEST_RESULT_PASS1_ACCEPTANCE_SCORE = 0.74;
 export const AUTO_BEST_RESULT_PASS2_ACCEPTANCE_SCORE = 0.68;
-export const AUTO_BEST_RESULT_MIN_FACE_SCORE = 0.52;
-export const AUTO_BEST_RESULT_MIN_STYLE_SCORE = 0.3;
-export const AUTO_BEST_RESULT_MIN_PALETTE_SCORE = 0.3;
-export const AUTO_BEST_RESULT_MIN_CLOTHING_SCORE = 0.3;
+export const AUTO_BEST_RESULT_MIN_FACE_SCORE = 0.58;
+export const AUTO_BEST_RESULT_MIN_STYLE_SCORE = 0.26;
+export const AUTO_BEST_RESULT_MIN_PALETTE_SCORE = 0.26;
+export const AUTO_BEST_RESULT_MIN_CLOTHING_SCORE = 0.34;
 
 const getConsistencyScore = (variant) => {
   return Number.isFinite(variant?.consistencyScore) ? variant.consistencyScore : Number.NEGATIVE_INFINITY;
@@ -33,6 +33,22 @@ const getArtifactCount = (variant) => {
   }
 
   return 0;
+};
+
+const isHardRejected = (variant) => {
+  if (typeof variant?.hardRejected === 'boolean') {
+    return variant.hardRejected;
+  }
+
+  if (typeof variant?.evaluation?.hardRejected === 'boolean') {
+    return variant.evaluation.hardRejected;
+  }
+
+  if (typeof variant?.consistencyProfile?.hardRejected === 'boolean') {
+    return variant.consistencyProfile.hardRejected;
+  }
+
+  return false;
 };
 
 const getMatchedTokenCount = (variant) => {
@@ -73,6 +89,10 @@ export const rankIllustrationVariants = (variants = []) => {
       variantIndex: Number.isInteger(variant?.variantIndex) ? variant.variantIndex : index
     }))
     .sort((left, right) => {
+      if (isHardRejected(left) !== isHardRejected(right)) {
+        return Number(isHardRejected(left)) - Number(isHardRejected(right));
+      }
+
       if (isConsistent(left) !== isConsistent(right)) {
         return Number(isConsistent(right)) - Number(isConsistent(left));
       }
