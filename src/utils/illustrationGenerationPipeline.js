@@ -1,6 +1,5 @@
-import { buildSceneDescription } from './sceneBuilder';
 import { getRecommendedDalleParams } from './imageRatioCalculator';
-import { buildIllustrationPrompt, validateRevisedPromptConsistency } from './illustrationPromptBuilder';
+import { buildSceneDescription } from './sceneBuilder';
 import {
   AUTO_BEST_RESULT_MAX_BATCH_RETRIES,
   AUTO_BEST_RESULT_MAX_CONSISTENCY_ATTEMPTS,
@@ -12,8 +11,9 @@ import {
   AUTO_BEST_RESULT_VARIANT_COUNT,
   selectBestIllustrationVariant
 } from './illustrationAutoPipeline';
-import { stableHash } from './hash';
-import { validateVisualIdentitySpec } from './visualIdentitySpec';
+import { buildIllustrationConstraintBundle, summarizeConstraintBundle } from './illustrationConstraintBundle';
+import { evaluateIllustrationCandidate } from './illustrationEvaluation';
+import { prepareGeneratorRequest, selectGeneratorStrategy } from './illustrationGeneratorStrategies';
 
 const PAGE_MIN_TEXT_LENGTH = 10;
 const SAFETY_RETRY_DELAY_MS = 1500;
@@ -38,21 +38,9 @@ const getPageText = (page) => {
   return pageText;
 };
 
-const getContinuityContext = (pages, page) => {
-  const previousReferencePrompt = (pages || [])
-    .filter((candidate) => (candidate.number || 0) < (page.number || 0))
-    .sort((a, b) => (b.number || 0) - (a.number || 0))
-    .map((candidate) => candidate?.illustration?.revised_prompt || candidate?.illustrationPrompt)
-    .find(Boolean);
-
-  return previousReferencePrompt
-    ? `Continuity reference from previous validated page: ${String(previousReferencePrompt).replace(/\s+/g, ' ').trim().slice(0, 420)}`
-    : '';
-};
-
-const createImageRequester = ({ openaiServiceUrl, spec, dalleParams }) => {
-  return async (prompt) => {
-    const referenceCharacter = spec?.mainCharacter || {};
+const createImageRequester = ({ openaiServiceUrl, constraintBundle, dalleParams }) => {
+  return async ({ prompt, strategyMetadata }) => {
+    const reference = constraintBundle?.reference || {};
     const response = await fetch(`${openaiServiceUrl}/api/generate-image`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -60,8 +48,9 @@ const createImageRequester = ({ openaiServiceUrl, spec, dalleParams }) => {
         prompt,
         size: dalleParams.size,
         quality: 'standard',
-        referenceImageId: referenceCharacter.referenceImageId || 'main-character-reference',
-        referenceImagePath: referenceCharacter.referenceImagePath || null
+        referenceImageId: reference.imageId || 'main-character-reference',
+        referenceImagePath: reference.imagePath || null,
+        generatorMode: strategyMetadata?.mode || 'text-only'
       })
     });
 
@@ -87,9 +76,16 @@ const isModerationBlocked = (error) => {
 };
 
 const isCandidateAcceptable = (candidate, minScore) => {
-  const flags = candidate?.consistencyProfile?.flags || {};
+  const evaluation = candidate?.evaluation || {};
+  const flags = evaluation?.flags || {};
+  const componentScores = evaluation?.componentScores || {};
+
   return Boolean(candidate?.isConsistent)
     && Number(candidate?.consistencyScore || 0) >= minScore
+    && Number(componentScores.identity || 0) >= 0.5
+    && Number(componentScores.style || 0) >= 0.25
+    && Number(componentScores.palette || 0) >= 0.2
+    && Number(componentScores.artifacts || 0) >= 0.6
     && flags.faceStable !== false
     && flags.hairstyleStable !== false
     && flags.styleStable !== false
@@ -99,15 +95,14 @@ const isCandidateAcceptable = (candidate, minScore) => {
 
 const normalizeVariant = ({
   generated,
-  consistency,
-  scene,
-  dalleParams,
+  evaluation,
   prompt,
   promptSections,
   promptTrace,
   negativePrompt,
-  identityHash,
-  referenceImageId,
+  strategy,
+  constraintBundle,
+  dalleParams,
   variantIndex,
   passName,
   consistencyAttempt,
@@ -117,25 +112,28 @@ const normalizeVariant = ({
   variantIndex,
   requestId: generated.requestId || null,
   revised_prompt: generated.revised_prompt,
-  referenceImageId,
+  referenceImageId: generated.referenceImageId || constraintBundle?.reference?.imageId || 'main-character-reference',
   generatedAt: new Date().toISOString(),
-  sceneDescription: scene,
+  sceneDescription: constraintBundle?.page?.sceneDescription || '',
   dalleParams,
   negativePromptUsed: negativePrompt,
   promptFinal: prompt,
   promptSections,
   promptTrace,
-  consistencyProfile: consistency,
-  identityHash: promptTrace?.identityHash || identityHash || null,
-  isConsistent: consistency.isConsistent,
-  consistencyScore: consistency.score,
-  weightedPenalty: consistency.weightedPenalty || 0,
-  consistencyMatchedTokens: consistency.matchedTokens,
-  consistencyAnchorRequirementMet: consistency.anchorRequirementMet,
-  consistencyAnchorMatchedTokens: consistency.anchorMatchedTokens,
-  consistencyAnchorExpectedTokens: consistency.anchorExpectedTokens,
-  detectedNonNarrativeArtifacts: consistency.detectedNonNarrativeArtifacts || [],
-  inconsistencyReasons: consistency.inconsistencyReasons || [],
+  generatorStrategy: strategy,
+  constraintBundleSummary: summarizeConstraintBundle(constraintBundle),
+  consistencyProfile: evaluation,
+  evaluation,
+  identityHash: promptTrace?.identityHash || constraintBundle?.identityHash || null,
+  isConsistent: evaluation.isConsistent,
+  consistencyScore: evaluation.score,
+  weightedPenalty: evaluation.weightedPenalty || 0,
+  consistencyMatchedTokens: evaluation.matchedTokens,
+  consistencyAnchorRequirementMet: evaluation.anchorRequirementMet,
+  consistencyAnchorMatchedTokens: evaluation.anchorMatchedTokens,
+  consistencyAnchorExpectedTokens: evaluation.anchorExpectedTokens,
+  detectedNonNarrativeArtifacts: evaluation.detectedNonNarrativeArtifacts || [],
+  inconsistencyReasons: evaluation.inconsistencyReasons || [],
   passName,
   consistencyAttempt,
   safeMode
@@ -146,44 +144,33 @@ const runCandidate = async ({
   candidateCount,
   passName,
   minAcceptanceScore,
-  retryForConsistency,
-  strictReferenceMode,
-  page,
-  pageText,
-  scene,
-  continuityContext,
-  spec,
+  constraintBundle,
   requestGeneratedImage,
   dalleParams,
-  identityHash,
-  maxConsistencyAttempts,
-  logPrefix
+  maxConsistencyAttempts
 }) => {
+  const strategy = selectGeneratorStrategy({ passName });
   let bestVariant = null;
   let safeMode = false;
   let lastRequestError = null;
 
   for (let consistencyAttempt = 0; consistencyAttempt < maxConsistencyAttempts; consistencyAttempt += 1) {
-    const { prompt, negativePrompt, promptSections, metadata } = buildIllustrationPrompt({
-      spec,
-      page,
-      template: page.template,
-      pageText,
-      sceneDescription: scene,
-      continuityContext: [
-        continuityContext,
-        `Pipeline pass ${passName}. Candidate ${candidateIndex + 1}/${candidateCount}.`,
-        consistencyAttempt > 0 ? `Consistency retry attempt ${consistencyAttempt + 1}/${maxConsistencyAttempts}.` : '',
-        safeMode ? 'Safety mode enabled: child-friendly, fully clothed, no violence, no frightening content.' : ''
-      ].filter(Boolean).join(' '),
-      retryForConsistency,
+    const { prompt, negativePrompt, promptSections, metadata, strategyMetadata } = prepareGeneratorRequest({
+      constraintBundle,
+      strategy,
       safeMode,
-      strongReferenceMode: strictReferenceMode
+      consistencyAttempt,
+      candidateIndex,
+      candidateCount,
+      maxConsistencyAttempts
     });
 
     let generated;
     try {
-      generated = await requestGeneratedImage(prompt);
+      generated = await requestGeneratedImage({
+        prompt,
+        strategyMetadata
+      });
     } catch (requestError) {
       lastRequestError = requestError;
       if (isModerationBlocked(requestError) && !safeMode) {
@@ -198,28 +185,27 @@ const runCandidate = async ({
       if (consistencyAttempt >= maxConsistencyAttempts - 1) {
         throw requestError;
       }
-
       continue;
     }
 
-    const consistency = validateRevisedPromptConsistency({
+    const evaluation = evaluateIllustrationCandidate({
       revisedPrompt: generated.revised_prompt,
       prompt,
       promptSections,
-      promptTrace: metadata?.promptTrace || null
-    }, spec);
+      promptTrace: metadata?.promptTrace || null,
+      constraintBundle
+    });
 
     const variant = normalizeVariant({
       generated,
-      consistency,
-      scene,
-      dalleParams,
+      evaluation,
       prompt,
       promptSections,
       promptTrace: metadata?.promptTrace || { identityHash: metadata?.identityHash || null },
       negativePrompt,
-      identityHash,
-      referenceImageId: generated.referenceImageId || spec?.mainCharacter?.referenceImageId || 'main-character-reference',
+      strategy: strategyMetadata,
+      constraintBundle,
+      dalleParams,
       variantIndex: candidateIndex,
       passName,
       consistencyAttempt,
@@ -231,30 +217,24 @@ const runCandidate = async ({
     }
 
     if (isCandidateAcceptable(variant, minAcceptanceScore)) {
-      return {
-        bestVariant: variant,
-        accepted: true
-      };
+      return { bestVariant: variant, accepted: true };
     }
   }
 
   if (bestVariant) {
-    return {
-      bestVariant,
-      accepted: false
-    };
+    return { bestVariant, accepted: false };
   }
 
-  throw lastRequestError || new Error(`${logPrefix}: aucune image exploitable générée`);
+  throw lastRequestError || new Error(`Illustration pipeline page ${constraintBundle?.page?.number}: aucune image exploitable générée`);
 };
 
 const runPass = async ({
   passName,
   candidateCount,
   minAcceptanceScore,
-  retryForConsistency,
-  strictReferenceMode,
-  context
+  constraintBundle,
+  requestGeneratedImage,
+  dalleParams
 }) => {
   const variants = [];
   const attempts = [];
@@ -266,19 +246,25 @@ const runPass = async ({
         candidateCount,
         passName,
         minAcceptanceScore,
-        retryForConsistency,
-        strictReferenceMode,
-        ...context
+        constraintBundle,
+        requestGeneratedImage,
+        dalleParams,
+        maxConsistencyAttempts: AUTO_BEST_RESULT_MAX_CONSISTENCY_ATTEMPTS
       });
 
       variants.push(result.bestVariant);
       attempts.push({
+        stage: 'candidate-generation',
         passName,
         candidateIndex,
+        generator: result.bestVariant?.generatorStrategy?.label || null,
+        accepted: result.accepted,
+        score: result.bestVariant?.consistencyScore ?? null,
         status: result.accepted ? 'accepted' : 'scored'
       });
     } catch (error) {
       attempts.push({
+        stage: 'candidate-generation',
         passName,
         candidateIndex,
         status: 'failed',
@@ -303,16 +289,8 @@ export async function generateIllustrationWithAutoPipeline({
   openaiServiceUrl,
   mode = 'page'
 }) {
-  const specValidation = validateVisualIdentitySpec(currentProject?.visualIdentitySpec);
-  if (!specValidation.ok) {
-    throw new Error(`visualIdentitySpec invalide: ${specValidation.errors.join(' | ')}`);
-  }
-
-  const spec = currentProject.visualIdentitySpec;
-  const identityHash = stableHash(spec);
-  const identityVersion = spec?.version || null;
   const pageText = getPageText(page);
-  const scene = await buildSceneDescription({
+  const sceneDescription = await buildSceneDescription({
     pageText,
     bookSummary: currentProject.summary || currentProject.description,
     characters: currentProject.characters || [],
@@ -320,9 +298,19 @@ export async function generateIllustrationWithAutoPipeline({
     openaiServiceUrl
   });
 
+  const preliminaryBundle = buildIllustrationConstraintBundle({
+    currentProject,
+    page,
+    pageText,
+    sceneDescription
+  });
   const dalleParams = getRecommendedDalleParams(page, currentProject.bookFormat || currentProject.format || '8x10');
-  const continuityContext = getContinuityContext(currentProject.pages, page);
-  const requestGeneratedImage = createImageRequester({ openaiServiceUrl, spec, dalleParams });
+  const requestGeneratedImage = createImageRequester({
+    openaiServiceUrl,
+    constraintBundle: preliminaryBundle,
+    dalleParams
+  });
+
   const candidateCount = mode === 'batch'
     ? AUTO_BEST_RESULT_PASS1_BATCH_CANDIDATE_COUNT
     : AUTO_BEST_RESULT_VARIANT_COUNT;
@@ -330,30 +318,25 @@ export async function generateIllustrationWithAutoPipeline({
     ? AUTO_BEST_RESULT_PASS2_BATCH_CANDIDATE_COUNT
     : AUTO_BEST_RESULT_PASS2_PAGE_CANDIDATE_COUNT;
 
-  const context = {
-    page,
-    pageText,
-    scene,
-    continuityContext,
-    spec,
-    requestGeneratedImage,
-    dalleParams,
-    identityHash,
-    maxConsistencyAttempts: AUTO_BEST_RESULT_MAX_CONSISTENCY_ATTEMPTS,
-    logPrefix: `Illustration pipeline page ${page.number}`
-  };
-
+  let finalConstraintBundle = preliminaryBundle;
   const passResults = [];
   let lastError = null;
 
   for (let batchAttempt = 0; batchAttempt <= AUTO_BEST_RESULT_MAX_BATCH_RETRIES; batchAttempt += 1) {
+    finalConstraintBundle = buildIllustrationConstraintBundle({
+      currentProject,
+      page,
+      pageText,
+      sceneDescription: finalConstraintBundle?.page?.sceneDescription || sceneDescription
+    });
+
     const pass1 = await runPass({
       passName: 'pass-1',
       candidateCount,
       minAcceptanceScore: AUTO_BEST_RESULT_PASS1_ACCEPTANCE_SCORE,
-      retryForConsistency: batchAttempt > 0,
-      strictReferenceMode: false,
-      context
+      constraintBundle: finalConstraintBundle,
+      requestGeneratedImage,
+      dalleParams
     });
     passResults.push(pass1);
 
@@ -371,13 +354,15 @@ export async function generateIllustrationWithAutoPipeline({
       return {
         selectedVariant,
         variants: pass1.variants,
-        scene,
+        scene: selectedVariant.sceneDescription,
         dalleParams,
-        identityHash,
-        identityVersion,
+        identityHash: finalConstraintBundle.identityHash,
+        identityVersion: finalConstraintBundle.spec?.version || null,
         attempts: passResults.flatMap((result) => result.attempts),
         pipeline: {
+          version: '2.0',
           passedIn: 'pass-1',
+          constraintBundle: summarizeConstraintBundle(finalConstraintBundle),
           passResults
         }
       };
@@ -387,9 +372,9 @@ export async function generateIllustrationWithAutoPipeline({
       passName: 'pass-2',
       candidateCount: pass2CandidateCount,
       minAcceptanceScore: AUTO_BEST_RESULT_PASS2_ACCEPTANCE_SCORE,
-      retryForConsistency: true,
-      strictReferenceMode: true,
-      context
+      constraintBundle: finalConstraintBundle,
+      requestGeneratedImage,
+      dalleParams
     });
     passResults.push(pass2);
 
@@ -410,13 +395,15 @@ export async function generateIllustrationWithAutoPipeline({
         return {
           selectedVariant,
           variants,
-          scene,
+          scene: selectedVariant.sceneDescription,
           dalleParams,
-          identityHash,
-          identityVersion,
+          identityHash: finalConstraintBundle.identityHash,
+          identityVersion: finalConstraintBundle.spec?.version || null,
           attempts: passResults.flatMap((result) => result.attempts),
           pipeline: {
+            version: '2.0',
             passedIn: pass2.accepted ? 'pass-2' : finalPass.passName,
+            constraintBundle: summarizeConstraintBundle(finalConstraintBundle),
             passResults
           }
         };

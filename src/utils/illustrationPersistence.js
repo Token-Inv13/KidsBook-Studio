@@ -87,6 +87,9 @@ export const buildIllustrationSelectionState = ({
     promptSections: generationMeta?.promptSections || variant?.promptSections || null,
     promptTrace: generationMeta?.promptTrace || variant?.promptTrace || null,
     consistencyProfile: generationMeta?.consistencyProfile || variant?.consistencyProfile || null,
+    evaluation: generationMeta?.evaluation || variant?.evaluation || null,
+    generatorStrategy: generationMeta?.generatorStrategy || variant?.generatorStrategy || null,
+    constraintBundleSummary: generationMeta?.constraintBundleSummary || variant?.constraintBundleSummary || null,
     identityHash: generationMeta?.identityHash || variant?.identityHash || null,
     referenceImageId: generationMeta?.referenceImageId || variant?.referenceImageId || null,
     generationStatus: 'ready',
@@ -124,6 +127,9 @@ export const buildIllustrationSelectionState = ({
     promptSections: variant?.promptSections || null,
     promptTrace: variant?.promptTrace || null,
     consistencyProfile: variant?.consistencyProfile || null,
+    evaluation: variant?.evaluation || null,
+    generatorStrategy: variant?.generatorStrategy || null,
+    constraintBundleSummary: variant?.constraintBundleSummary || null,
     identityHash: variant?.identityHash || null,
     referenceImageId: variant?.referenceImageId || null
   };
@@ -200,6 +206,9 @@ export async function finalizePageIllustrationSelection({
     promptSections: generationMeta?.promptSections || variant?.promptSections || null,
     promptTrace: generationMeta?.promptTrace || variant?.promptTrace || null,
     consistencyProfile: generationMeta?.consistencyProfile || variant?.consistencyProfile || null,
+    evaluation: generationMeta?.evaluation || variant?.evaluation || null,
+    generatorStrategy: generationMeta?.generatorStrategy || variant?.generatorStrategy || null,
+    constraintBundleSummary: generationMeta?.constraintBundleSummary || variant?.constraintBundleSummary || null,
     identityHash: generationMeta?.identityHash || variant?.identityHash || null,
     referenceImageId: generationMeta?.referenceImageId || variant?.referenceImageId || null
   };

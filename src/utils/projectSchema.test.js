@@ -59,6 +59,21 @@ describe('projectSchema', () => {
             consistencyProfile: {
               faceHair: ['round', 'hair']
             },
+            evaluation: {
+              evaluationVersion: '2.0',
+              componentScores: {
+                identity: 0.82,
+                style: 0.71
+              }
+            },
+            generatorStrategy: {
+              id: 'guided-generator',
+              mode: 'guided'
+            },
+            constraintBundleSummary: {
+              version: '2.0',
+              referenceImageId: 'main-character-reference'
+            },
             identityHash: 'abcd1234'
           }
         }
@@ -72,6 +87,9 @@ describe('projectSchema', () => {
     expect(migrated.images).toHaveLength(1);
     expect(migrated.images[0].pageId).toBe('page-1');
     expect(migrated.images[0].promptSections?.invariantPrompt).toBe('VISUAL IDENTITY LOCK');
+    expect(migrated.images[0].evaluation?.evaluationVersion).toBe('2.0');
+    expect(migrated.images[0].generatorStrategy?.mode).toBe('guided');
+    expect(migrated.images[0].constraintBundleSummary?.referenceImageId).toBe('main-character-reference');
     expect(migrated.images[0].identityHash).toBe('abcd1234');
   });
 
