@@ -110,7 +110,13 @@ function ensureProductionCsp(indexHtmlPath) {
 
 function decodeSafeFileRequestPath(requestUrl) {
   const parsed = new URL(requestUrl);
-  const rawPath = decodeURIComponent(`${parsed.host || ''}${parsed.pathname || ''}`);
+  let rawPath = decodeURIComponent(`${parsed.host || ''}${parsed.pathname || ''}`);
+
+  // Chromium on Windows canonicalizes safe-file:///C:/... to safe-file://c/...
+  // for standard custom schemes. Rebuild the drive-qualified absolute path.
+  if (/^[A-Za-z]$/.test(parsed.host || '') && /^\/.+/.test(parsed.pathname || '')) {
+    rawPath = `${parsed.host}:${parsed.pathname}`;
+  }
 
   if (!rawPath) {
     throw new Error('Missing safe-file path');

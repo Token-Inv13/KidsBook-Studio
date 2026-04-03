@@ -174,7 +174,7 @@ const buildSafetyLine = (safeMode) => {
     return '';
   }
 
-  return 'SAFETY MODE: child-friendly scene, fully clothed characters, no nudity, no violence, no injury, no frightening content. Prefer a simple readable composition, one clear moment, one consistent protagonist, and fewer interpretive flourishes.';
+  return 'SAFETY MODE: keep a gentle, age-appropriate children\'s storybook moment with everyday clothing, friendly expressions, calm body language, soft atmosphere, and a simple readable composition focused on one reassuring scene.';
 };
 
 const buildFragileCaseLine = (fragileConsistencyMode) => {

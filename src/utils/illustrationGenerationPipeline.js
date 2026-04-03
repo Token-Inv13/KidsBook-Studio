@@ -469,6 +469,7 @@ export async function generateIllustrationWithAutoPipeline({
   const pass2CandidateCount = mode === 'batch'
     ? runtimeConfig.pass2BatchCandidateCount
     : runtimeConfig.pass2PageCandidateCount;
+  const maxConsistencyAttempts = mode === 'batch' ? 1 : runtimeConfig.maxConsistencyAttempts;
 
   let finalConstraintBundle = preliminaryBundle;
   const passResults = [];
@@ -490,7 +491,7 @@ export async function generateIllustrationWithAutoPipeline({
       constraintBundle: finalConstraintBundle,
       requestGeneratedImage,
       dalleParams,
-      maxConsistencyAttempts: runtimeConfig.maxConsistencyAttempts
+      maxConsistencyAttempts
     });
     passResults.push(pass1);
 
@@ -532,7 +533,7 @@ export async function generateIllustrationWithAutoPipeline({
       constraintBundle: finalConstraintBundle,
       requestGeneratedImage,
       dalleParams,
-      maxConsistencyAttempts: runtimeConfig.maxConsistencyAttempts
+      maxConsistencyAttempts
     });
     passResults.push(pass2);
 
@@ -615,6 +616,41 @@ export async function generateIllustrationWithAutoPipeline({
             pipeline: {
               version: '2.5',
               passedIn: 'pass-2',
+              constraintBundle: summarizeConstraintBundle(finalConstraintBundle),
+              passResults
+            }
+          };
+        }
+      }
+
+      if (mode === 'batch' && (fallbackSourceVariant || bestFallbackCandidate?.variant)) {
+        const fallbackReason = pass2.variants.length === 0 && pass1.variants.length > 0
+          ? 'batch mode: safe mode produced no strictly acceptable candidate; using least bad pass-1 candidate'
+          : (fallbackSourceVariant?.safeMode || bestFallbackCandidate?.variant?.safeMode)
+            ? 'batch mode: safe mode fallback accepted without extra retry loop'
+            : 'batch mode: best available candidate accepted as fallback without extra retry loop';
+        const fallbackDecision = buildFallbackDecision(fallbackSourceVariant || bestFallbackCandidate?.variant, fallbackReason, {
+          mode,
+          pageNumber: page.number,
+          attempts: passResults.flatMap((result) => result.attempts),
+          pipelineVersion: '2.5'
+        });
+
+        if (fallbackDecision) {
+          return {
+            selectedVariant: fallbackDecision.selectedVariant,
+            variants,
+            scene: selectedVariant.sceneDescription,
+            dalleParams,
+            identityHash: finalConstraintBundle.identityHash,
+            identityVersion: finalConstraintBundle.spec?.version || null,
+            fallbackAccepted: fallbackDecision.fallbackAccepted,
+            fallbackReason: fallbackDecision.fallbackReason,
+            finalDecisionType: fallbackDecision.finalDecisionType,
+            attempts: fallbackDecision.attempts,
+            pipeline: {
+              version: '2.5',
+              passedIn: finalPass.passName,
               constraintBundle: summarizeConstraintBundle(finalConstraintBundle),
               passResults
             }

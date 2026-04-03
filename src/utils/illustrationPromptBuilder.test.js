@@ -54,6 +54,8 @@ describe('illustrationPromptBuilder', () => {
     expect(result.prompt).toContain('The image must look like a final children\'s book illustration, not a concept sheet or design board.');
     expect(result.prompt).toContain('GLOBAL NEGATIVE CONSTRAINTS');
     expect(result.prompt.indexOf('VISUAL IDENTITY LOCK')).toBeLessThan(result.prompt.indexOf('SCENE DIRECTION'));
+    expect(result.prompt).not.toContain('no nudity');
+    expect(result.prompt).not.toContain('fully clothed characters');
     expect(result.negativePrompt).toContain('different face');
     expect(result.negativePrompt).toContain('No color palette panel');
     expect(result.negativePrompt).toContain('No UI elements');
