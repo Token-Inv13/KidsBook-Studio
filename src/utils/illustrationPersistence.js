@@ -56,6 +56,35 @@ const normalizeStoredVariants = (variants = []) => {
     }));
 };
 
+const hydrateSelectedVariantWithLocalFile = ({
+  variants,
+  variant,
+  generationMeta,
+  localFileUrl,
+  localPath,
+  sourceUrl
+}) => {
+  const selectedVariantIndex = Number.isInteger(variant?.variantIndex)
+    ? variant.variantIndex
+    : (Number.isInteger(generationMeta?.autoSelectedVariantIndex) ? generationMeta.autoSelectedVariantIndex : null);
+
+  return variants.map((candidate, index) => {
+    const matchesSelectedIndex = selectedVariantIndex !== null && index === selectedVariantIndex;
+    const matchesSourceUrl = candidate.url === sourceUrl || candidate.originalUrl === sourceUrl;
+
+    if (!matchesSelectedIndex && !matchesSourceUrl) {
+      return candidate;
+    }
+
+    return {
+      ...candidate,
+      url: localFileUrl,
+      localPath,
+      originalUrl: candidate.originalUrl || sourceUrl
+    };
+  });
+};
+
 export const buildIllustrationSelectionState = ({
   page,
   localFileUrl,
@@ -70,6 +99,14 @@ export const buildIllustrationSelectionState = ({
   const storedVariants = normalizeStoredVariants(
     variant?.variants || variant?.allVariants || generationMeta?.variants || []
   );
+  const hydratedStoredVariants = hydrateSelectedVariantWithLocalFile({
+    variants: storedVariants,
+    variant,
+    generationMeta,
+    localFileUrl,
+    localPath,
+    sourceUrl
+  });
 
   const imageAsset = createProjectImageAsset({
     id: assetId,
@@ -125,8 +162,8 @@ export const buildIllustrationSelectionState = ({
     autoSelectedVariantIndex: Number.isInteger(generationMeta?.autoSelectedVariantIndex)
       ? generationMeta.autoSelectedVariantIndex
       : (Number.isInteger(variant?.autoSelectedVariantIndex) ? variant.autoSelectedVariantIndex : null),
-    variants: storedVariants,
-    allVariants: storedVariants,
+    variants: hydratedStoredVariants,
+    allVariants: hydratedStoredVariants,
     promptSections: variant?.promptSections || null,
     promptTrace: variant?.promptTrace || null,
     consistencyProfile: variant?.consistencyProfile || null,
@@ -182,6 +219,14 @@ export async function finalizePageIllustrationSelection({
   );
 
   const localFileUrl = toFileUrl(localPath);
+  const hydratedStoredVariants = hydrateSelectedVariantWithLocalFile({
+    variants: storedVariants,
+    variant,
+    generationMeta,
+    localFileUrl,
+    localPath,
+    sourceUrl
+  });
   const { imageAsset, illustration } = buildIllustrationSelectionState({
     page,
     localFileUrl,
@@ -200,7 +245,7 @@ export async function finalizePageIllustrationSelection({
     createdAt: generationMeta?.createdAt || timestamp,
     updatedAt: timestamp,
     status: 'ready',
-    variants: storedVariants,
+    variants: hydratedStoredVariants,
     selectionMode: generationMeta?.selectionMode || variant?.selectionMode || null,
     fallbackAccepted: Boolean(generationMeta?.fallbackAccepted ?? variant?.fallbackAccepted),
     fallbackReason: generationMeta?.fallbackReason || variant?.fallbackReason || null,

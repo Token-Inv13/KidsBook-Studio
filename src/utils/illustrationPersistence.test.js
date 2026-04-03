@@ -45,6 +45,10 @@ describe('illustrationPersistence', () => {
     expect(illustration.finalDecisionType).toBe('fallback');
     expect(illustration.autoSelected).toBe(true);
     expect(illustration.variants).toHaveLength(2);
+    expect(illustration.variants[0].url).toBe('file:///tmp/page_1.png');
+    expect(illustration.variants[0].localPath).toBe('/tmp/page_1.png');
+    expect(illustration.variants[0].originalUrl).toBe('https://example.com/generated.png');
+    expect(illustration.variants[1].url).toBe('https://example.com/generated-2.png');
   });
 
   test('downloads, validates and atomically associates a remote illustration to the page and image registry', async () => {
@@ -92,6 +96,7 @@ describe('illustrationPersistence', () => {
     expect(updatedProject.pages[0].imageAssetId).toBe('page-illustration:page-2');
     expect(updatedProject.pages[0].imageLocalPath).toContain('/projects/project-1/images/page_2_');
     expect(updatedProject.pages[0].illustration.assetId).toBe('page-illustration:page-2');
+    expect(updatedProject.pages[0].generationMeta.localUrl).toContain('file:///projects/project-1/images/page_2_');
   });
 
   test('reuses an already local file without re-downloading it', async () => {

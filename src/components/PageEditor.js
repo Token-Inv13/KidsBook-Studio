@@ -141,6 +141,11 @@ const PageEditor = ({ pageId }) => {
       return;
     }
 
+    if (!openaiServiceUrl) {
+      setError('Le service OpenAI est en cours d\'initialisation. Réessayez dans quelques secondes.');
+      return;
+    }
+
     // Check if page has text
     const pageText = page.textBlocks?.map(b => b.content).join(' ').trim();
     if (!pageText || pageText.length < 10) {
@@ -234,7 +239,7 @@ const PageEditor = ({ pageId }) => {
           {canGenerateIllustration() && (
             <button
               onClick={page.illustration ? handleRegenerateIllustration : handleGenerateIllustration}
-              disabled={isGeneratingScene || isGeneratingVariants}
+              disabled={isGeneratingScene || isGeneratingVariants || !openaiServiceUrl}
               className="flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {page.illustration ? (

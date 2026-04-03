@@ -19,6 +19,7 @@ import { buildIllustrationConstraintBundle, summarizeConstraintBundle } from './
 import { evaluateIllustrationCandidate } from './illustrationEvaluation';
 import { prepareGeneratorRequest, selectGeneratorStrategy } from './illustrationGeneratorStrategies';
 import { electronBridge } from './electronBridge';
+import { createTransientOpenAIError, waitForOpenAIServiceReady } from './openaiServiceGuard';
 
 const PAGE_MIN_TEXT_LENGTH = 10;
 const SAFETY_RETRY_DELAY_MS = 1500;
@@ -103,7 +104,7 @@ const createImageRequester = ({ openaiServiceUrl, constraintBundle, dalleParams 
         timeoutError.statusCode = 504;
         throw timeoutError;
       }
-      throw error;
+      throw createTransientOpenAIError('Impossible de contacter le service OpenAI pour générer l\'illustration.', error);
     } finally {
       clearTimeout(timeoutId);
     }
@@ -435,6 +436,7 @@ export async function generateIllustrationWithAutoPipeline({
   mode = 'page'
 }) {
   const runtimeConfig = await getRuntimePipelineConfig();
+  await waitForOpenAIServiceReady(openaiServiceUrl);
   const pageText = getPageText(page);
   const sceneDescription = await buildSceneDescription({
     pageText,

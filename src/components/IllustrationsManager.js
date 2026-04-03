@@ -99,6 +99,7 @@ function IllustrationsManager({ onOpenPage, onNavigateToCharacters }) {
   const displayedIdentityErrors = identitySpecErrors.length > 0
     ? identitySpecErrors
     : ['Identite visuelle non validee.'];
+  const isOpenAIServiceReady = Boolean(openaiServiceUrl);
 
   useEffect(() => {
     const onResize = () => setViewportHeight(window.innerHeight);
@@ -161,6 +162,11 @@ function IllustrationsManager({ onOpenPage, onNavigateToCharacters }) {
   const handleRegeneratePage = async (page) => {
     if (!identitySpecStatus.ok) {
       setError(`visualIdentitySpec invalide: ${identitySpecStatus.errors.join(' | ')}`);
+      return;
+    }
+
+    if (!isOpenAIServiceReady) {
+      setError('Le service OpenAI est en cours d\'initialisation. Réessayez dans quelques secondes.');
       return;
     }
 
@@ -327,6 +333,11 @@ function IllustrationsManager({ onOpenPage, onNavigateToCharacters }) {
       return;
     }
 
+    if (!isOpenAIServiceReady) {
+      setError('Le service OpenAI est en cours d\'initialisation. Réessayez dans quelques secondes.');
+      return;
+    }
+
     // Get pages that need illustrations
     const pagesToGenerate = currentProject.pages.filter(page => {
       const template = page.template;
@@ -422,7 +433,7 @@ function IllustrationsManager({ onOpenPage, onNavigateToCharacters }) {
             ) : (
               <button
                 onClick={handleGenerateAll}
-                disabled={stats.missing === 0 || !identitySpecStatus.ok}
+                disabled={stats.missing === 0 || !identitySpecStatus.ok || !isOpenAIServiceReady}
                 data-testid="generate-all-illustrations"
                 className="inline-flex items-center gap-2 px-5 py-2.5 bg-rose-600 text-white rounded-xl hover:bg-rose-700 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
               >
@@ -589,7 +600,7 @@ function IllustrationsManager({ onOpenPage, onNavigateToCharacters }) {
                         </button>
                         <button
                           onClick={() => handleRegeneratePage(page)}
-                          disabled={!canGenerate || isProcessing || !identitySpecStatus.ok}
+                          disabled={!canGenerate || isProcessing || !identitySpecStatus.ok || !isOpenAIServiceReady}
                           className="inline-flex items-center gap-1 px-3 py-1.5 text-xs border border-indigo-300 text-indigo-700 rounded-md hover:bg-indigo-50 disabled:opacity-50 disabled:cursor-not-allowed"
                           data-testid={`regenerate-page-${page.number}`}
                         >

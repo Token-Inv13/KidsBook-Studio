@@ -4,6 +4,8 @@
  * based on page text, book summary, and characters
  */
 
+import { createTransientOpenAIError } from './openaiServiceGuard';
+
 /**
  * Builds a visual scene description from page content
  * @param {Object} params - Scene building parameters
@@ -25,6 +27,10 @@ export async function buildSceneDescription({
 }) {
   if (!pageText || pageText.trim().length === 0) {
     throw new Error('Page text is required to build a scene description');
+  }
+
+  if (!openaiServiceUrl) {
+    throw createTransientOpenAIError('Le service OpenAI est en cours d\'initialisation. Relancez la génération dans quelques secondes.');
   }
 
   // Build character context without fixed visual details
@@ -86,9 +92,9 @@ Concentre-toi sur l'action, le lieu, l'ambiance et la composition.`;
       });
     } catch (error) {
       if (error?.name === 'AbortError') {
-        throw new Error(`Scene builder timed out after ${SCENE_BUILDER_TIMEOUT_MS}ms`);
+        throw createTransientOpenAIError(`Scene builder timed out after ${SCENE_BUILDER_TIMEOUT_MS}ms`, error);
       }
-      throw error;
+      throw createTransientOpenAIError('Impossible de contacter le service OpenAI pour générer la scène.', error);
     } finally {
       clearTimeout(timeoutId);
     }

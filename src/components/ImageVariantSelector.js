@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { X, Check, RefreshCw, Download } from 'lucide-react';
+import { resolveStoredImageUrl } from '../utils/imageUrlResolver';
 
 /**
  * ImageVariantSelector Component
@@ -28,8 +29,13 @@ function ImageVariantSelector({
   };
 
   const handleDownload = (variant, index) => {
+    const downloadUrl = resolveStoredImageUrl(variant);
+    if (!downloadUrl) {
+      return;
+    }
+
     const link = document.createElement('a');
-    link.href = variant.url;
+    link.href = downloadUrl;
     link.download = `variant-${index + 1}.png`;
     link.click();
   };
@@ -64,7 +70,10 @@ function ImageVariantSelector({
           ) : (
             <>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-                {variants.map((variant, index) => (
+                {variants.map((variant, index) => {
+                  const previewUrl = resolveStoredImageUrl(variant);
+
+                  return (
                   <div
                     key={index}
                     className={`relative border-4 rounded-lg overflow-hidden cursor-pointer transition-all ${
@@ -91,11 +100,17 @@ function ImageVariantSelector({
                     </div>
 
                     {/* Image */}
-                    <img
-                      src={variant.url}
-                      alt={`Variante ${index + 1}`}
-                      className="w-full h-auto"
-                    />
+                    {previewUrl ? (
+                      <img
+                        src={previewUrl}
+                        alt={`Variante ${index + 1}`}
+                        className="w-full h-auto"
+                      />
+                    ) : (
+                      <div className="w-full aspect-square bg-gray-100 flex items-center justify-center text-sm text-gray-500 px-4 text-center">
+                        Aperçu indisponible pour cette variante
+                      </div>
+                    )}
 
                     {/* Download button */}
                     <button
@@ -116,7 +131,7 @@ function ImageVariantSelector({
                       </div>
                     )}
                   </div>
-                ))}
+                )})}
               </div>
 
               {/* Instructions */}

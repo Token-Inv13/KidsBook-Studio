@@ -87,6 +87,21 @@ export const resolvePageImageUrl = (page) => {
   return candidates.find((url) => isRenderableImageUrl(url)) || null;
 };
 
+export const resolveStoredImageUrl = (image) => {
+  if (!image || typeof image !== 'object') {
+    return null;
+  }
+
+  const candidates = [
+    toSafeFileUrl(image.localPath),
+    toSafeFileUrl(image.imageLocalPath),
+    toSafeFileUrl(image.url),
+    toSafeFileUrl(image.imageUrl)
+  ];
+
+  return candidates.find((url) => isRenderableImageUrl(url)) || null;
+};
+
 export const resolveCharacterReferenceImageUrl = (mainCharacter) => {
   if (!mainCharacter) {
     return null;
