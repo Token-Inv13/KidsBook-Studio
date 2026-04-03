@@ -15,7 +15,7 @@ import { generateIllustrationWithAutoPipeline } from '../utils/illustrationGener
  * Shows status for all pages and allows batch generation
  */
 function IllustrationsManager({ onOpenPage, onNavigateToCharacters }) {
-  const { currentProject, updateProject, openaiServiceUrl } = useApp();
+  const { currentProject, updateProject, openaiServiceUrl, ideogramServiceUrl } = useApp();
   const [queueProgress, setQueueProgress] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [currentProcessingPageId, setCurrentProcessingPageId] = useState(null);
@@ -272,6 +272,7 @@ function IllustrationsManager({ onOpenPage, onNavigateToCharacters }) {
       currentProject,
       page,
       openaiServiceUrl,
+      ideogramServiceUrl,
       mode: 'batch'
     });
 

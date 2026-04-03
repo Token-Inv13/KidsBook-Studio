@@ -20,7 +20,7 @@ function App() {
     const checkApiKey = async () => {
       try {
         const result = await electronBridge.apiKey.get();
-        if (!result || !result.success || !result.apiKey) {
+        if (!result || !result.success || !result.hasApiKey) {
           console.info('[App] No OpenAI API key found; settings remain accessible from the toolbar.');
         }
       } catch (error) {

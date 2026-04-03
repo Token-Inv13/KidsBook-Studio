@@ -89,7 +89,15 @@ export const GENERATOR_STRATEGIES = {
   }
 };
 
-export const selectGeneratorStrategy = ({ passName }) => {
+export const selectGeneratorStrategy = ({ passName, providerId }) => {
+  if (providerId === 'ideogram') {
+    if (passName === 'pass-2') {
+      return GENERATOR_STRATEGIES.guidedGenerator;
+    }
+
+    return GENERATOR_STRATEGIES.futureReferenceNativeGenerator;
+  }
+
   if (passName === 'pass-2') {
     return GENERATOR_STRATEGIES.guidedGenerator;
   }

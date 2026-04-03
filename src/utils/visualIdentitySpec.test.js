@@ -53,6 +53,10 @@ describe('visualIdentitySpec', () => {
 
     expect(spec.version).toBe('2.0');
     expect(spec.promptProfile).toBeDefined();
+    expect(spec.characterPack).toBeDefined();
+    expect(spec.stylePack).toBeDefined();
+    expect(spec.characterPack.canonicalReference.imageId).toBe('main-character-reference');
+    expect(spec.stylePack.referenceImages).toHaveLength(1);
     expect(spec.promptProfile.promptSections.qualityPrompt).toContain('no text');
     expect(spec.invariants).toContain('Palette verrouillee: #F2C14E, #4A90E2');
     expect(spec.invariants).toContain('Reference image lock: the selected visual identity image is canonical and must be replicated exactly.');

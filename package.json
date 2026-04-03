@@ -43,11 +43,11 @@
     ],
     "directories": {
       "buildResources": "assets",
-      "output": "dist",
-      "app": "."
+      "output": "dist"
     },
     "asar": true,
     "win": {
+      "icon": "assets/icon.ico",
       "target": [
         {
           "target": "nsis",

@@ -3,8 +3,9 @@ const path = require('path');
 const fs = require('fs');
 const { pathToFileURL } = require('url');
 const Store = require('electron-store');
-const keytar = require('keytar');
 const { startOpenAIService, stopOpenAIService } = require('./openai-service');
+const { startIdeogramService, stopIdeogramService } = require('./ideogram-service');
+const { deleteSecret, getSecret, setSecret } = require('./credential-store');
 
 const SAFE_FILE_SCHEME = 'safe-file';
 
@@ -31,27 +32,40 @@ function getSafeDocumentsPath() {
   }
 }
 
-// Set user data path to Documents/KidsBookStudio
-const userDataPath = path.join(getSafeDocumentsPath(), 'KidsBookStudio');
-if (!fs.existsSync(userDataPath)) {
-  fs.mkdirSync(userDataPath, { recursive: true });
+function getSafeAppDataPath() {
+  try {
+    return app.getPath('appData');
+  } catch (error) {
+    const homePath = app.getPath('home');
+    console.warn('[Main] Falling back to home directory for app data path:', error.message);
+    return path.join(homePath, 'AppData', 'Roaming');
+  }
 }
-app.setPath('userData', userDataPath);
+
+const legacyDataPath = path.join(getSafeDocumentsPath(), 'KidsBookStudio');
+const runtimeUserDataPath = path.join(getSafeAppDataPath(), 'KidsBookStudio');
+
+for (const targetPath of [legacyDataPath, runtimeUserDataPath]) {
+  if (!fs.existsSync(targetPath)) {
+    fs.mkdirSync(targetPath, { recursive: true });
+  }
+}
+
+app.setPath('userData', runtimeUserDataPath);
 app.disableHardwareAcceleration();
 app.commandLine.appendSwitch('disable-gpu');
 
-// Create Projects directory
-const projectsPath = path.join(userDataPath, 'Projects');
+// Keep projects on the existing documents-backed location to avoid migration churn.
+const projectsPath = path.join(legacyDataPath, 'Projects');
 if (!fs.existsSync(projectsPath)) {
   fs.mkdirSync(projectsPath, { recursive: true });
 }
 
-const store = new Store();
+const store = new Store({ cwd: legacyDataPath });
 let mainWindow;
 let openaiServicePort;
+let ideogramServicePort;
 
-const SERVICE_NAME = 'KidsBookStudio';
-const ACCOUNT_NAME = 'OpenAI_API_Key';
 const PRODUCTION_CSP = [
   "default-src 'self'",
   "script-src 'self'",
@@ -298,6 +312,13 @@ app.whenReady().then(async () => {
     console.error('Failed to start OpenAI service:', error);
   }
 
+  try {
+    ideogramServicePort = await startIdeogramService();
+    console.log(`Ideogram service started on port ${ideogramServicePort}`);
+  } catch (error) {
+    console.error('Failed to start Ideogram service:', error);
+  }
+
   registerSafeFileProtocol();
 
   createWindow();
@@ -317,6 +338,7 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', async () => {
   await stopOpenAIService();
+  await stopIdeogramService();
 });
 
 ipcMain.handle('store:get', (event, key) => {
@@ -338,7 +360,7 @@ ipcMain.handle('store:delete', (event, key) => {
 
 ipcMain.handle('apikey:set', async (event, apiKey) => {
   try {
-    await keytar.setPassword(SERVICE_NAME, ACCOUNT_NAME, apiKey);
+    await setSecret('openai', apiKey);
     return { success: true };
   } catch (error) {
     console.error('Failed to store API key:', error);
@@ -348,8 +370,8 @@ ipcMain.handle('apikey:set', async (event, apiKey) => {
 
 ipcMain.handle('apikey:get', async () => {
   try {
-    const apiKey = await keytar.getPassword(SERVICE_NAME, ACCOUNT_NAME);
-    return { success: true, apiKey };
+    const apiKey = await getSecret('openai');
+    return { success: true, hasApiKey: Boolean(apiKey) };
   } catch (error) {
     console.error('Failed to retrieve API key:', error);
     return { success: false, error: error.message };
@@ -358,10 +380,40 @@ ipcMain.handle('apikey:get', async () => {
 
 ipcMain.handle('apikey:delete', async () => {
   try {
-    await keytar.deletePassword(SERVICE_NAME, ACCOUNT_NAME);
+    await deleteSecret('openai');
     return { success: true };
   } catch (error) {
     console.error('Failed to delete API key:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('ideogramKey:set', async (event, apiKey) => {
+  try {
+    await setSecret('ideogram', apiKey);
+    return { success: true };
+  } catch (error) {
+    console.error('Failed to store Ideogram API key:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('ideogramKey:get', async () => {
+  try {
+    const apiKey = await getSecret('ideogram');
+    return { success: true, hasApiKey: Boolean(apiKey) };
+  } catch (error) {
+    console.error('Failed to retrieve Ideogram API key:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('ideogramKey:delete', async () => {
+  try {
+    await deleteSecret('ideogram');
+    return { success: true };
+  } catch (error) {
+    console.error('Failed to delete Ideogram API key:', error);
     return { success: false, error: error.message };
   }
 });
@@ -370,12 +422,16 @@ ipcMain.handle('openai:port', () => {
   return openaiServicePort;
 });
 
+ipcMain.handle('ideogram:port', () => {
+  return ideogramServicePort;
+});
+
 ipcMain.handle('app:getProjectsPath', () => {
   return projectsPath;
 });
 
 ipcMain.handle('app:getUserDataPath', () => {
-  return userDataPath;
+  return runtimeUserDataPath;
 });
 
 ipcMain.handle('app:getRuntimeFlags', () => {

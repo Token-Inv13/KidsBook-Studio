@@ -26,7 +26,7 @@ const mockStore = {
 const mockApiKey = {
   get: async () => {
     const key = localStorage.getItem('mock-api-key');
-    return { success: true, apiKey: key };
+    return { success: true, hasApiKey: Boolean(key) };
   },
   set: async (apiKey) => {
     localStorage.setItem('mock-api-key', apiKey);
@@ -38,9 +38,30 @@ const mockApiKey = {
   }
 };
 
+const mockIdeogramApiKey = {
+  get: async () => {
+    const key = localStorage.getItem('mock-ideogram-api-key');
+    return { success: true, hasApiKey: Boolean(key) };
+  },
+  set: async (apiKey) => {
+    localStorage.setItem('mock-ideogram-api-key', apiKey);
+    return { success: true };
+  },
+  delete: async () => {
+    localStorage.removeItem('mock-ideogram-api-key');
+    return { success: true };
+  }
+};
+
 const mockOpenAI = {
   getPort: async () => {
     return 3001; // Default port
+  }
+};
+
+const mockIdeogram = {
+  getPort: async () => {
+    return 3002; // Default port
   }
 };
 
@@ -102,8 +123,14 @@ export const electronBridge = {
   get apiKey() {
     return isElectron() ? window.electron.apiKey : mockApiKey;
   },
+  get ideogramApiKey() {
+    return isElectron() ? window.electron.ideogramApiKey : mockIdeogramApiKey;
+  },
   get openai() {
     return isElectron() ? window.electron.openai : mockOpenAI;
+  },
+  get ideogram() {
+    return isElectron() ? window.electron.ideogram : mockIdeogram;
   },
   get app() {
     return isElectron() && window.electron.app ? window.electron.app : {

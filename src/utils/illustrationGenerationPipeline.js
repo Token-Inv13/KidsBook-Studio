@@ -18,8 +18,15 @@ import {
 import { buildIllustrationConstraintBundle, summarizeConstraintBundle } from './illustrationConstraintBundle';
 import { evaluateIllustrationCandidate } from './illustrationEvaluation';
 import { prepareGeneratorRequest, selectGeneratorStrategy } from './illustrationGeneratorStrategies';
+import {
+  fallbackImageProvider,
+  imageProviderIdeogram,
+  imageProviderOpenAI,
+  selectPrimaryImageProvider
+} from './imageProviders';
 import { electronBridge } from './electronBridge';
 import { createTransientOpenAIError, waitForOpenAIServiceReady } from './openaiServiceGuard';
+import { createTransientIdeogramError, waitForIdeogramServiceReady } from './ideogramServiceGuard';
 
 const PAGE_MIN_TEXT_LENGTH = 10;
 const SAFETY_RETRY_DELAY_MS = 1500;
@@ -76,27 +83,63 @@ const getPageText = (page) => {
   return pageText;
 };
 
-const createImageRequester = ({ openaiServiceUrl, constraintBundle, dalleParams }) => {
-  return async ({ prompt, strategyMetadata }) => {
-    const reference = constraintBundle?.reference || {};
+const normalizeProviderImagePayload = (payload, fallback = {}) => {
+  const images = Array.isArray(payload?.images) ? payload.images : [];
+  const firstImage = images[0] || {};
+
+  return {
+    url: payload?.url || firstImage.url || null,
+    revised_prompt: payload?.revised_prompt || firstImage.revised_prompt || firstImage.prompt || fallback.prompt || '',
+    requestId: payload?.requestId || fallback.requestId || null,
+    images: images.length > 0 ? images : (payload?.url ? [{ url: payload.url }] : [])
+  };
+};
+
+const createProviderRequestRunner = ({
+  provider,
+  providerId,
+  dalleParams,
+  operation = 'generate'
+}) => {
+  const isTransientStatus = (statusCode) => {
+    const numericStatus = Number(statusCode) || 0;
+    return numericStatus >= 500 || numericStatus === 429 || numericStatus === 503 || numericStatus === 504;
+  };
+
+  return async ({ prompt, strategyMetadata, mode, candidateIndex, selectedImage, variantIndex, constraintBundle }) => {
+    const activeConstraintBundle = constraintBundle || {};
+    const reference = activeConstraintBundle?.reference || {};
+    const referenceImage = selectedImage || reference.imagePath || reference.imageUrl || null;
+    const requestOptions = {
+      prompt,
+      dalleParams,
+      constraintBundle: {
+        ...activeConstraintBundle,
+        selectedImage
+      },
+      strategyMetadata,
+      referenceImageId: reference.imageId || 'main-character-reference',
+      referenceImagePath: reference.imagePath || null,
+      selectedImage,
+      variantIndex: Number.isInteger(variantIndex) ? variantIndex : candidateIndex || 0,
+      mode
+    };
+
+    if (providerId === 'ideogram') {
+      requestOptions.constraintBundle = {
+        ...activeConstraintBundle,
+        selectedImage: referenceImage
+      };
+    }
+
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), IMAGE_REQUEST_TIMEOUT_MS);
 
-    let response;
     try {
-      response = await fetch(`${openaiServiceUrl}/api/generate-image`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          prompt,
-          size: dalleParams.size,
-          quality: 'standard',
-          referenceImageId: reference.imageId || 'main-character-reference',
-          referenceImagePath: reference.imagePath || null,
-          generatorMode: strategyMetadata?.mode || 'text-only'
-        }),
-        signal: controller.signal
-      });
+      const payload = operation === 'remix'
+        ? await provider.remixCandidate(requestOptions, { signal: controller.signal })
+        : await provider.generateCandidate(requestOptions, { signal: controller.signal });
+      return normalizeProviderImagePayload(payload, { prompt });
     } catch (error) {
       if (error?.name === 'AbortError') {
         const timeoutError = new Error(`Image generation request timed out after ${IMAGE_REQUEST_TIMEOUT_MS}ms`);
@@ -104,23 +147,23 @@ const createImageRequester = ({ openaiServiceUrl, constraintBundle, dalleParams 
         timeoutError.statusCode = 504;
         throw timeoutError;
       }
-      throw createTransientOpenAIError('Impossible de contacter le service OpenAI pour générer l\'illustration.', error);
+
+      if (providerId === 'openai') {
+        if (isTransientStatus(error?.statusCode || error?.status)) {
+          throw createTransientOpenAIError('Impossible de contacter le service OpenAI pour générer l\'illustration.', error);
+        }
+
+        throw error;
+      }
+
+      if (isTransientStatus(error?.statusCode || error?.status)) {
+        throw createTransientIdeogramError('Impossible de contacter le service Ideogram pour générer l\'illustration.', error);
+      }
+
+      throw error;
     } finally {
       clearTimeout(timeoutId);
     }
-
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      const statusCode = payload.statusCode || response.status;
-      const requestId = payload.requestId ? ` [req:${payload.requestId}]` : '';
-      const baseMessage = payload.error || `Erreur lors de la génération (${statusCode})`;
-      const error = new Error(`${baseMessage}${requestId}`);
-      error.transient = statusCode >= 500 || statusCode === 429;
-      error.statusCode = statusCode;
-      throw error;
-    }
-
-    return payload;
   };
 };
 
@@ -267,13 +310,14 @@ const runCandidate = async ({
   candidateIndex,
   candidateCount,
   passName,
+  providerId,
   minAcceptanceScore,
   constraintBundle,
   requestGeneratedImage,
   dalleParams,
   maxConsistencyAttempts
 }) => {
-  const strategy = selectGeneratorStrategy({ passName });
+  const strategy = selectGeneratorStrategy({ passName, providerId });
   let bestVariant = null;
   let safeMode = false;
   let lastRequestError = null;
@@ -294,7 +338,8 @@ const runCandidate = async ({
     try {
       generated = await requestGeneratedImage({
         prompt,
-        strategyMetadata
+        strategyMetadata,
+        constraintBundle
       });
     } catch (requestError) {
       lastRequestError = requestError;
@@ -360,6 +405,7 @@ const runCandidate = async ({
 const runPass = async ({
   passName,
   candidateCount,
+  providerId,
   minAcceptanceScore,
   constraintBundle,
   requestGeneratedImage,
@@ -375,6 +421,7 @@ const runPass = async ({
         candidateIndex,
         candidateCount,
         passName,
+        providerId,
         minAcceptanceScore,
         constraintBundle,
         requestGeneratedImage,
@@ -429,14 +476,83 @@ const runPass = async ({
   };
 };
 
+const runRemixPass = async ({
+  providerId,
+  minAcceptanceScore,
+  constraintBundle,
+  requestRemixImage,
+  dalleParams,
+  baseVariant
+}) => {
+  if (!requestRemixImage || !baseVariant) {
+    return null;
+  }
+
+  const strategy = selectGeneratorStrategy({ passName: 'pass-2', providerId });
+  const { prompt, negativePrompt, promptSections, metadata, strategyMetadata } = prepareGeneratorRequest({
+    constraintBundle,
+    strategy,
+    safeMode: Boolean(baseVariant.safeMode),
+    fragileConsistencyMode: true,
+    consistencyAttempt: 0,
+    candidateIndex: baseVariant.variantIndex ?? 0,
+    candidateCount: 1,
+    maxConsistencyAttempts: 1
+  });
+
+  const generated = await requestRemixImage({
+    prompt,
+    strategyMetadata,
+    mode: 'remix',
+    candidateIndex: baseVariant.variantIndex ?? 0,
+    selectedImage: baseVariant.url || baseVariant.localPath || baseVariant.originalUrl || constraintBundle?.reference?.imagePath || constraintBundle?.reference?.imageUrl || null,
+    variantIndex: baseVariant.variantIndex ?? 0,
+    constraintBundle
+  });
+
+  const evaluation = evaluateIllustrationCandidate({
+    revisedPrompt: generated.revised_prompt,
+    prompt,
+    promptSections,
+    promptTrace: metadata?.promptTrace || null,
+    constraintBundle
+  });
+
+  const variant = normalizeVariant({
+    generated,
+    evaluation,
+    prompt,
+    promptSections,
+    promptTrace: metadata?.promptTrace || { identityHash: metadata?.identityHash || null },
+    negativePrompt,
+    strategy: strategyMetadata,
+    constraintBundle,
+    dalleParams,
+    variantIndex: baseVariant.variantIndex ?? 0,
+    passName: 'remix',
+    consistencyAttempt: 0,
+    safeMode: true
+  });
+
+  return {
+    variant,
+    accepted: isCandidateAcceptable(variant, minAcceptanceScore)
+  };
+};
+
 export async function generateIllustrationWithAutoPipeline({
   currentProject,
   page,
   openaiServiceUrl,
+  ideogramServiceUrl,
   mode = 'page'
 }) {
   const runtimeConfig = await getRuntimePipelineConfig();
   await waitForOpenAIServiceReady(openaiServiceUrl);
+  const primaryProviderId = selectPrimaryImageProvider({ ideogramServiceUrl, openaiServiceUrl });
+  if (primaryProviderId === 'ideogram') {
+    await waitForIdeogramServiceReady(ideogramServiceUrl);
+  }
   const pageText = getPageText(page);
   const sceneDescription = await buildSceneDescription({
     pageText,
@@ -457,11 +573,35 @@ export async function generateIllustrationWithAutoPipeline({
     ...recommendedDalleParams,
     size: runtimeConfig.forcedImageSize || recommendedDalleParams.size
   };
-  const requestGeneratedImage = createImageRequester({
-    openaiServiceUrl,
-    constraintBundle: preliminaryBundle,
+  const primaryProvider = primaryProviderId === 'ideogram'
+    ? imageProviderIdeogram({ serviceUrl: ideogramServiceUrl })
+    : imageProviderOpenAI({ serviceUrl: openaiServiceUrl });
+  const secondaryProviderId = fallbackImageProvider(primaryProviderId);
+  const secondaryProvider = secondaryProviderId === 'ideogram'
+    ? imageProviderIdeogram({ serviceUrl: ideogramServiceUrl })
+    : secondaryProviderId === 'openai'
+      ? imageProviderOpenAI({ serviceUrl: openaiServiceUrl })
+      : null;
+  const requestGeneratedImage = createProviderRequestRunner({
+    provider: primaryProvider,
+    providerId: primaryProviderId,
     dalleParams
   });
+  const requestRemixImage = primaryProvider.supportsRemix
+    ? createProviderRequestRunner({
+        provider: primaryProvider,
+        providerId: primaryProviderId,
+        dalleParams,
+        operation: 'remix'
+      })
+    : null;
+  const requestFallbackImage = secondaryProvider
+    ? createProviderRequestRunner({
+        provider: secondaryProvider,
+        providerId: secondaryProviderId,
+        dalleParams
+      })
+    : null;
 
   const candidateCount = mode === 'batch'
     ? runtimeConfig.pass1BatchCandidateCount
@@ -487,6 +627,7 @@ export async function generateIllustrationWithAutoPipeline({
     const pass1 = await runPass({
       passName: 'pass-1',
       candidateCount,
+      providerId: primaryProviderId,
       minAcceptanceScore: AUTO_BEST_RESULT_PASS1_ACCEPTANCE_SCORE,
       constraintBundle: finalConstraintBundle,
       requestGeneratedImage,
@@ -518,7 +659,7 @@ export async function generateIllustrationWithAutoPipeline({
         finalDecisionType: 'accepted',
         attempts: passResults.flatMap((result) => result.attempts),
         pipeline: {
-          version: '2.5',
+          version: '3.0',
           passedIn: 'pass-1',
           constraintBundle: summarizeConstraintBundle(finalConstraintBundle),
           passResults
@@ -529,6 +670,7 @@ export async function generateIllustrationWithAutoPipeline({
     const pass2 = await runPass({
       passName: 'pass-2',
       candidateCount: pass2CandidateCount,
+      providerId: primaryProviderId,
       minAcceptanceScore: AUTO_BEST_RESULT_PASS2_ACCEPTANCE_SCORE,
       constraintBundle: finalConstraintBundle,
       requestGeneratedImage,
@@ -536,6 +678,143 @@ export async function generateIllustrationWithAutoPipeline({
       maxConsistencyAttempts
     });
     passResults.push(pass2);
+
+    if (!pass2.accepted && requestRemixImage) {
+      const remixSource = pass2.bestVariant || pass1.bestVariant || null;
+      if (remixSource) {
+        try {
+          const remixResult = await runRemixPass({
+            providerId: primaryProviderId,
+            minAcceptanceScore: AUTO_BEST_RESULT_PASS2_ACCEPTANCE_SCORE,
+            constraintBundle: finalConstraintBundle,
+            requestRemixImage,
+            dalleParams,
+            baseVariant: remixSource
+          });
+
+          if (remixResult?.variant) {
+            passResults.push({
+              passName: 'remix',
+              variants: [remixResult.variant],
+              attempts: [{
+                stage: 'remix',
+                providerId: primaryProviderId,
+                accepted: remixResult.accepted,
+                score: remixResult.variant?.consistencyScore ?? null,
+                status: remixResult.accepted ? 'accepted' : 'scored'
+              }],
+              bestVariant: remixResult.variant,
+              bestFallbackVariant: remixResult.variant,
+              accepted: remixResult.accepted
+            });
+
+            if (remixResult.accepted) {
+              const selectedVariant = {
+                ...remixResult.variant,
+                batchGenerated: mode === 'batch',
+                autoSelected: true,
+                autoSelectedVariantIndex: remixResult.variant.variantIndex,
+                selectionMode: 'auto-best-result',
+                variants: [remixResult.variant],
+                allVariants: [remixResult.variant]
+              };
+
+              return {
+                selectedVariant,
+                variants: [remixResult.variant],
+                scene: selectedVariant.sceneDescription,
+                dalleParams,
+                identityHash: finalConstraintBundle.identityHash,
+                identityVersion: finalConstraintBundle.spec?.version || null,
+                fallbackAccepted: false,
+                fallbackReason: null,
+                finalDecisionType: 'accepted',
+                attempts: passResults.flatMap((result) => result.attempts),
+                pipeline: {
+                  version: '3.0',
+                  passedIn: 'remix',
+                  constraintBundle: summarizeConstraintBundle(finalConstraintBundle),
+                  passResults
+                }
+              };
+            }
+          }
+        } catch (error) {
+          passResults.push({
+            passName: 'remix',
+            variants: [],
+            attempts: [{
+              stage: 'remix',
+              providerId: primaryProviderId,
+              status: 'failed',
+              error: error?.message || 'Unknown remix error'
+            }],
+            bestVariant: null,
+            bestFallbackVariant: null,
+            accepted: false
+          });
+        }
+      }
+    }
+
+    if (!pass2.accepted && requestFallbackImage) {
+      const fallbackPass = await runPass({
+        passName: 'pass-1',
+        candidateCount: 1,
+        providerId: secondaryProviderId,
+        minAcceptanceScore: AUTO_BEST_RESULT_PASS1_ACCEPTANCE_SCORE,
+        constraintBundle: finalConstraintBundle,
+        requestGeneratedImage: requestFallbackImage,
+        dalleParams,
+        maxConsistencyAttempts: 1
+      });
+      passResults.push(fallbackPass);
+
+      if (fallbackPass.bestVariant) {
+        const currentBestFallback = bestFallbackCandidate?.variant
+          ? selectBestIllustrationVariant([bestFallbackCandidate.variant, fallbackPass.bestVariant])
+          : fallbackPass.bestVariant;
+
+        if (currentBestFallback === fallbackPass.bestVariant) {
+          bestFallbackCandidate = {
+            variant: fallbackPass.bestVariant,
+            variants: fallbackPass.variants,
+            passName: secondaryProviderId
+          };
+        }
+      }
+
+      if (fallbackPass.accepted && fallbackPass.bestVariant) {
+        const selectedVariant = {
+          ...fallbackPass.bestVariant,
+          batchGenerated: mode === 'batch',
+          autoSelected: true,
+          autoSelectedVariantIndex: fallbackPass.bestVariant.variantIndex,
+          selectionMode: 'auto-best-result',
+          variants: fallbackPass.variants,
+          allVariants: fallbackPass.variants
+        };
+
+        return {
+          selectedVariant,
+          variants: fallbackPass.variants,
+          scene: selectedVariant.sceneDescription,
+          dalleParams,
+          identityHash: finalConstraintBundle.identityHash,
+          identityVersion: finalConstraintBundle.spec?.version || null,
+          fallbackAccepted: true,
+          fallbackReason: 'primary provider failed, fallback provider accepted',
+          finalDecisionType: 'fallback',
+          attempts: passResults.flatMap((result) => result.attempts),
+          pipeline: {
+            version: '3.0',
+            passedIn: secondaryProviderId,
+            constraintBundle: summarizeConstraintBundle(finalConstraintBundle),
+            passResults
+          }
+        };
+      }
+    }
 
     const finalPass = pass2.bestVariant ? pass2 : pass1.bestVariant ? pass1 : pass2;
     if (finalPass.bestVariant) {
@@ -574,7 +853,7 @@ export async function generateIllustrationWithAutoPipeline({
             mode,
             pageNumber: page.number,
             attempts: passResults.flatMap((result) => result.attempts),
-            pipelineVersion: '2.5'
+            pipelineVersion: '3.0'
           });
 
           if (!fallbackDecision) {
@@ -594,7 +873,7 @@ export async function generateIllustrationWithAutoPipeline({
               finalDecisionType: fallbackDecision.finalDecisionType,
               attempts: fallbackDecision.attempts,
               pipeline: {
-                version: '2.5',
+                version: '3.0',
                 passedIn: finalPass.passName,
                 constraintBundle: summarizeConstraintBundle(finalConstraintBundle),
                 passResults
@@ -614,7 +893,7 @@ export async function generateIllustrationWithAutoPipeline({
             finalDecisionType: 'accepted',
             attempts: passResults.flatMap((result) => result.attempts),
             pipeline: {
-              version: '2.5',
+              version: '3.0',
               passedIn: 'pass-2',
               constraintBundle: summarizeConstraintBundle(finalConstraintBundle),
               passResults
@@ -633,7 +912,7 @@ export async function generateIllustrationWithAutoPipeline({
           mode,
           pageNumber: page.number,
           attempts: passResults.flatMap((result) => result.attempts),
-          pipelineVersion: '2.5'
+          pipelineVersion: '3.0'
         });
 
         if (fallbackDecision) {
@@ -649,7 +928,7 @@ export async function generateIllustrationWithAutoPipeline({
             finalDecisionType: fallbackDecision.finalDecisionType,
             attempts: fallbackDecision.attempts,
             pipeline: {
-              version: '2.5',
+              version: '3.0',
               passedIn: finalPass.passName,
               constraintBundle: summarizeConstraintBundle(finalConstraintBundle),
               passResults
@@ -667,7 +946,7 @@ export async function generateIllustrationWithAutoPipeline({
         mode,
         pageNumber: page.number,
         attempts: passResults.flatMap((result) => result.attempts),
-        pipelineVersion: '2.5'
+        pipelineVersion: '3.0'
       });
 
       return {
@@ -682,7 +961,7 @@ export async function generateIllustrationWithAutoPipeline({
         finalDecisionType: fallbackDecision.finalDecisionType,
         attempts: fallbackDecision.attempts,
         pipeline: {
-          version: '2.5',
+          version: '3.0',
           passedIn: bestFallbackCandidate.passName,
           constraintBundle: summarizeConstraintBundle(finalConstraintBundle),
           passResults

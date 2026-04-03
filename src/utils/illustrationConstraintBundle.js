@@ -69,6 +69,8 @@ export const buildIllustrationConstraintBundle = ({
     version: '2.0',
     identityHash,
     spec,
+    characterPack: spec?.characterPack || null,
+    stylePack: spec?.stylePack || null,
     page: {
       id: page?.id || null,
       number: page?.number || null,
@@ -112,6 +114,8 @@ export const summarizeConstraintBundle = (bundle) => ({
   referenceImageId: bundle?.reference?.imageId || null,
   hasReferenceImage: Boolean(bundle?.reference?.hasReferenceImage),
   referenceDerivedDescriptor: bundle?.reference?.derivedDescriptor || '',
+  characterPackId: bundle?.characterPack?.id || null,
+  stylePackId: bundle?.stylePack?.id || null,
   invariantCount: Array.isArray(bundle?.invariants) ? bundle.invariants.length : 0,
   palette: Array.isArray(bundle?.palette) ? bundle.palette : [],
   continuityFromPage: bundle?.continuity?.previousPageNumber || null,

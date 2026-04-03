@@ -22,6 +22,9 @@ jest.mock('../utils/electronBridge', () => {
       openai: {
         getPort: jest.fn()
       },
+      ideogram: {
+        getPort: jest.fn()
+      },
       app: {
         getProjectsPath: jest.fn(),
         getUserDataPath: jest.fn()
@@ -131,6 +134,7 @@ describe('AppProvider autosave', () => {
     electronBridge.store.get.mockResolvedValue([baseProject]);
     electronBridge.store.set.mockResolvedValue(true);
     electronBridge.openai.getPort.mockResolvedValue(3001);
+    electronBridge.ideogram.getPort.mockResolvedValue(3002);
     electronBridge.fs.exists.mockResolvedValue(true);
     electronBridge.fs.readFile.mockResolvedValue({
       success: true,

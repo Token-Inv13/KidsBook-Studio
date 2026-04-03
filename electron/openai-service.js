@@ -1,9 +1,6 @@
 const express = require('express');
-const keytar = require('keytar');
 const OpenAI = require('openai');
-
-const SERVICE_NAME = 'KidsBookStudio';
-const ACCOUNT_NAME = 'OpenAI_API_Key';
+const { getSecret } = require('./credential-store');
 
 const getPromptPreview = (prompt) => {
   if (!prompt || typeof prompt !== 'string') {
@@ -69,7 +66,7 @@ const trimPromptForImageGeneration = (prompt, maxLength = MAX_DALLE_PROMPT_LENGT
 };
 
 async function initializeOpenAI() {
-  const apiKey = await keytar.getPassword(SERVICE_NAME, ACCOUNT_NAME);
+  const apiKey = await getSecret('openai');
   if (apiKey) {
     openaiClient = new OpenAI({ apiKey });
   }

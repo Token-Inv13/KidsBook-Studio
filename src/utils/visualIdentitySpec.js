@@ -1,6 +1,7 @@
 import { stableHash } from './hash';
 
 const SPEC_VERSION = '2.0';
+const PACK_VERSION = '1.0';
 
 const toCleanString = (value) => {
   if (typeof value !== 'string') {
@@ -194,6 +195,75 @@ const buildInvariants = ({ mainCharacter, artStyle }) => {
   return invariants;
 };
 
+const buildCharacterPack = ({ mainCharacter, promptProfile, validatedAt }) => {
+  const canonicalReference = {
+    imageId: mainCharacter.referenceImageId || 'main-character-reference',
+    url: mainCharacter.referenceImage || null,
+    path: mainCharacter.referenceImagePath || null,
+    base64: mainCharacter.referenceImageBase64 || null,
+    mimeType: mainCharacter.referenceImageMimeType || 'image/png'
+  };
+
+  return {
+    version: PACK_VERSION,
+    id: `character-pack:${promptProfile.identityHash}`,
+    packType: 'character',
+    validatedAt,
+    identityHash: promptProfile.identityHash,
+    canonicalReference,
+    referenceImages: [canonicalReference].filter((entry) => entry.url || entry.path || entry.base64),
+    invariants: [
+      promptProfile.promptSections?.invariantPrompt || '',
+      promptProfile.promptSections?.referencePrompt || '',
+      ...(Array.isArray(mainCharacter.colorPalette) ? mainCharacter.colorPalette.map((color) => `Palette anchor: ${color}`) : [])
+    ].filter(Boolean),
+    descriptors: {
+      name: mainCharacter.name || '',
+      age: mainCharacter.age || '',
+      appearance: mainCharacter.appearance || '',
+      description: mainCharacter.description || '',
+      clothing: mainCharacter.clothing || '',
+      referencePrompt: mainCharacter.referencePrompt || ''
+    },
+    promptAnchors: {
+      faceHair: promptProfile.consistencyAnchors?.faceHair || [],
+      age: promptProfile.consistencyAnchors?.age || [],
+      clothing: promptProfile.consistencyAnchors?.clothing || []
+    }
+  };
+};
+
+const buildStylePack = ({ mainCharacter, artStyle, promptProfile, validatedAt }) => {
+  const canonicalStyleReference = {
+    imageId: mainCharacter.referenceImageId || 'main-character-reference',
+    url: mainCharacter.referenceImage || null,
+    path: mainCharacter.referenceImagePath || null,
+    base64: mainCharacter.referenceImageBase64 || null,
+    mimeType: mainCharacter.referenceImageMimeType || 'image/png'
+  };
+
+  return {
+    version: PACK_VERSION,
+    id: `style-pack:${promptProfile.identityHash}`,
+    packType: 'style',
+    validatedAt,
+    identityHash: promptProfile.identityHash,
+    artStyle: {
+      id: artStyle.id || '',
+      prompt: artStyle.prompt || ''
+    },
+    palette: Array.isArray(mainCharacter.colorPalette) ? mainCharacter.colorPalette : [],
+    renderingRules: [
+      promptProfile.promptSections?.stylePrompt || '',
+      promptProfile.promptSections?.palettePrompt || '',
+      promptProfile.promptSections?.sceneGuardPrompt || '',
+      promptProfile.promptSections?.qualityPrompt || ''
+    ].filter(Boolean),
+    referenceImages: [canonicalStyleReference].filter((entry) => entry.url || entry.path || entry.base64),
+    styleReferenceMode: 'reuses-character-reference-until-dedicated-style-reference-exists'
+  };
+};
+
 export const buildVisualIdentityPromptProfile = (spec = {}) => {
   const normalizedMainCharacter = {
     name: toCleanString(spec?.mainCharacter?.name || spec?.character?.name),
@@ -334,13 +404,25 @@ export const buildVisualIdentitySpec = ({ project, mainCharacterData }) => {
     mainCharacter,
     artStyle
   });
+  const validatedAt = new Date().toISOString();
 
   const spec = {
     version: SPEC_VERSION,
     mainCharacter,
     artStyle,
     invariants: [],
-    promptProfile
+    promptProfile,
+    characterPack: buildCharacterPack({
+      mainCharacter,
+      promptProfile,
+      validatedAt
+    }),
+    stylePack: buildStylePack({
+      mainCharacter,
+      artStyle,
+      promptProfile,
+      validatedAt
+    })
   };
 
   spec.invariants = buildInvariants({
