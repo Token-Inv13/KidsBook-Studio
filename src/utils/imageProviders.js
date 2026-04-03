@@ -21,6 +21,12 @@ const buildReferenceImagePayload = (pack, fallbackImagePath = null) => {
     .filter((entry) => entry.url || entry.path || entry.base64);
 };
 
+const ensureReferenceImages = (referenceImages, label) => {
+  if (referenceImages.length === 0) {
+    throw new Error(`Ideogram generation requires a ${label} reference`);
+  }
+};
+
 const createLocalImageProvider = ({
   id,
   label,
@@ -129,6 +135,9 @@ export const imageProviderIdeogram = ({ serviceUrl }) => {
         constraintBundle?.reference?.imagePath || null
       );
 
+      ensureReferenceImages(characterReferenceImages, 'character');
+      ensureReferenceImages(styleReferenceImages, 'style');
+
       return {
         prompt,
         mode,
@@ -136,7 +145,7 @@ export const imageProviderIdeogram = ({ serviceUrl }) => {
         rendering_speed: mode === 'remix' ? 'QUALITY' : 'TURBO',
         magic_prompt: 'AUTO',
         negative_prompt: strategyMetadata?.negativePrompt || null,
-        style_type: 'GENERAL',
+        style_type: 'AUTO',
         num_images: 1,
         image_weight: mode === 'remix' ? 65 : 50,
         seed: variantIndex + 1,

@@ -127,6 +127,8 @@ export const buildIllustrationSelectionState = ({
     evaluation: generationMeta?.evaluation || variant?.evaluation || null,
     generatorStrategy: generationMeta?.generatorStrategy || variant?.generatorStrategy || null,
     constraintBundleSummary: generationMeta?.constraintBundleSummary || variant?.constraintBundleSummary || null,
+    generationTrace: generationMeta?.generationTrace || variant?.generationTrace || null,
+    pageDecision: generationMeta?.pageDecision || variant?.pageDecision || null,
     identityHash: generationMeta?.identityHash || variant?.identityHash || null,
     referenceImageId: generationMeta?.referenceImageId || variant?.referenceImageId || null,
     generationStatus: 'ready',
@@ -260,6 +262,8 @@ export async function finalizePageIllustrationSelection({
     evaluation: generationMeta?.evaluation || variant?.evaluation || null,
     generatorStrategy: generationMeta?.generatorStrategy || variant?.generatorStrategy || null,
     constraintBundleSummary: generationMeta?.constraintBundleSummary || variant?.constraintBundleSummary || null,
+    generationTrace: generationMeta?.generationTrace || variant?.generationTrace || null,
+    pageDecision: generationMeta?.pageDecision || variant?.pageDecision || null,
     identityHash: generationMeta?.identityHash || variant?.identityHash || null,
     referenceImageId: generationMeta?.referenceImageId || variant?.referenceImageId || null
   };

@@ -294,6 +294,8 @@ function IllustrationsManager({ onOpenPage, onNavigateToCharacters }) {
       evaluation: selectedVariant.evaluation || null,
       generatorStrategy: selectedVariant.generatorStrategy || null,
       constraintBundleSummary: selectedVariant.constraintBundleSummary || null,
+      generationTrace: selectedVariant.generationTrace || pipelineResult.pipeline?.pageDecision || null,
+      pageDecision: pipelineResult.pipeline?.pageDecision || selectedVariant.generationTrace || null,
       attempts: pipelineResult.attempts,
       variants: pipelineResult.variants,
       selectionMode: 'auto-best-result',
@@ -306,6 +308,14 @@ function IllustrationsManager({ onOpenPage, onNavigateToCharacters }) {
     };
 
     console.log('[IllustrationsManager] Persisting final illustration for page', page.number);
+    console.info('[IllustrationsManager] generation trace', {
+      pageNumber: page.number,
+      provider: generationMeta.generationTrace?.providerUsed || generationMeta.generationTrace?.providerId || null,
+      remixUsed: Boolean(generationMeta.generationTrace?.remixUsed),
+      fallbackOpenAIUsed: Boolean(generationMeta.generationTrace?.fallbackOpenAIUsed),
+      scoreFinal: generationMeta.generationTrace?.scoreFinal ?? selectedVariant.consistencyScore ?? null,
+      decision: generationMeta.generationTrace?.decision || generationMeta.finalDecisionType || null
+    });
     const { illustration } = await finalizePageIllustrationSelection({
       currentProject,
       page,

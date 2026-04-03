@@ -141,6 +141,8 @@ export const createProjectImageAsset = (image = {}, pageId = null) => {
     evaluation: image.evaluation && typeof image.evaluation === 'object' ? image.evaluation : null,
     generatorStrategy: image.generatorStrategy && typeof image.generatorStrategy === 'object' ? image.generatorStrategy : null,
     constraintBundleSummary: image.constraintBundleSummary && typeof image.constraintBundleSummary === 'object' ? image.constraintBundleSummary : null,
+    generationTrace: image.generationTrace && typeof image.generationTrace === 'object' ? image.generationTrace : null,
+    pageDecision: image.pageDecision && typeof image.pageDecision === 'object' ? image.pageDecision : null,
     identityHash: toNonEmptyString(image.identityHash) || null,
     referenceImageId: toNonEmptyString(image.referenceImageId) || null,
     referenceImageBase64: toNonEmptyString(image.referenceImageBase64) || null,
@@ -202,6 +204,8 @@ const buildImagesIndex = (project) => {
         evaluation: page.generationMeta?.evaluation,
         generatorStrategy: page.generationMeta?.generatorStrategy,
         constraintBundleSummary: page.generationMeta?.constraintBundleSummary,
+        generationTrace: page.generationMeta?.generationTrace,
+        pageDecision: page.generationMeta?.pageDecision,
         identityHash: page.generationMeta?.identityHash,
         generationStatus: 'ready',
         createdAt: page.generationMeta?.createdAt || page.illustration?.selectedAt

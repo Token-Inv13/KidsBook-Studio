@@ -121,6 +121,8 @@ const PageEditor = ({ pageId }) => {
         evaluation: variant.evaluation || null,
         generatorStrategy: variant.generatorStrategy || null,
         constraintBundleSummary: variant.constraintBundleSummary || null,
+        generationTrace: variant.generationTrace || null,
+        pageDecision: variant.pageDecision || null,
         identityHash: variant.identityHash || null,
         variants: storedVariants,
         selectionMode: 'auto-best-result',

@@ -212,6 +212,15 @@ async function startIdeogramService() {
         });
       }
 
+      console.info('[Ideogram Service] request', {
+        requestId,
+        mode,
+        promptLength: String(prompt).length,
+        characterReferenceCount: Array.isArray(character_reference_images) ? character_reference_images.length : 0,
+        styleReferenceCount: Array.isArray(style_reference_images) ? style_reference_images.length : 0,
+        hasRemixImage: Boolean(image)
+      });
+
       const endpoint = mode === 'remix' ? IDEOGRAM_REMX_ENDPOINT : IDEOGRAM_GENERATE_ENDPOINT;
       const formData = new FormData();
 
@@ -251,6 +260,13 @@ async function startIdeogramService() {
         formData,
         requestId,
         prompt
+      });
+
+      console.info('[Ideogram Service] response', {
+        requestId,
+        mode,
+        url: normalizedResponse.url,
+        imageCount: Array.isArray(normalizedResponse.images) ? normalizedResponse.images.length : 0
       });
 
       res.json(normalizedResponse);

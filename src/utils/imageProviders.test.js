@@ -96,6 +96,7 @@ describe('imageProviders', () => {
     const body = JSON.parse(options.body);
     expect(body.mode).toBe('generate');
     expect(body.resolution).toBe('1024x1792');
+    expect(body.style_type).toBe('AUTO');
     expect(body.character_reference_images).toHaveLength(1);
     expect(body.style_reference_images).toHaveLength(1);
     expect(body.image).toBeNull();
@@ -137,8 +138,57 @@ describe('imageProviders', () => {
     const [, options] = global.fetch.mock.calls[0];
     const body = JSON.parse(options.body);
     expect(body.mode).toBe('remix');
+    expect(body.style_type).toBe('AUTO');
     expect(body.image).toBe('https://example.com/source.png');
     expect(body.image_weight).toBe(65);
+  });
+
+  test('rejects Ideogram generation when character reference is missing', async () => {
+    const provider = imageProviderIdeogram({ serviceUrl: 'http://localhost:3002' });
+
+    await expect(provider.generateCandidate({
+      prompt: 'A child in a rainy village',
+      dalleParams: { size: '1024x1792' },
+      constraintBundle: {
+        characterPack: {},
+        stylePack: {
+          canonicalReference: {
+            url: 'file:///tmp/style.png',
+            path: '/tmp/style.png',
+            mimeType: 'image/png'
+          }
+        },
+        reference: {}
+      },
+      strategyMetadata: {
+        negativePrompt: 'no text'
+      },
+      variantIndex: 0
+    })).rejects.toThrow('Ideogram generation requires a character reference');
+  });
+
+  test('rejects Ideogram generation when style reference is missing', async () => {
+    const provider = imageProviderIdeogram({ serviceUrl: 'http://localhost:3002' });
+
+    await expect(provider.generateCandidate({
+      prompt: 'A child in a rainy village',
+      dalleParams: { size: '1024x1792' },
+      constraintBundle: {
+        characterPack: {
+          canonicalReference: {
+            url: 'file:///tmp/character.png',
+            path: '/tmp/character.png',
+            mimeType: 'image/png'
+          }
+        },
+        stylePack: {},
+        reference: {}
+      },
+      strategyMetadata: {
+        negativePrompt: 'no text'
+      },
+      variantIndex: 0
+    })).rejects.toThrow('Ideogram generation requires a style reference');
   });
 
   test('builds the OpenAI fallback payload used by the local service', async () => {

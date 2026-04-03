@@ -31,8 +31,75 @@ import { createTransientIdeogramError, waitForIdeogramServiceReady } from './ide
 const PAGE_MIN_TEXT_LENGTH = 10;
 const SAFETY_RETRY_DELAY_MS = 1500;
 const IMAGE_REQUEST_TIMEOUT_MS = 150_000;
+const IDEOGRAM_ACCEPTANCE_THRESHOLDS = {
+  pass1: 0.82,
+  pass2: 0.8,
+  remix: 0.84,
+  batchPass1: 0.84,
+  batchPass2: 0.82,
+  batchRemix: 0.85
+};
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const getAcceptanceThreshold = ({ providerId, passName, mode }) => {
+  if (providerId !== 'ideogram') {
+    return passName === 'pass-2'
+      ? AUTO_BEST_RESULT_PASS2_ACCEPTANCE_SCORE
+      : AUTO_BEST_RESULT_PASS1_ACCEPTANCE_SCORE;
+  }
+
+  if (passName === 'remix') {
+    return mode === 'batch' ? IDEOGRAM_ACCEPTANCE_THRESHOLDS.batchRemix : IDEOGRAM_ACCEPTANCE_THRESHOLDS.remix;
+  }
+
+  if (passName === 'pass-2') {
+    return mode === 'batch' ? IDEOGRAM_ACCEPTANCE_THRESHOLDS.batchPass2 : IDEOGRAM_ACCEPTANCE_THRESHOLDS.pass2;
+  }
+
+  return mode === 'batch' ? IDEOGRAM_ACCEPTANCE_THRESHOLDS.batchPass1 : IDEOGRAM_ACCEPTANCE_THRESHOLDS.pass1;
+};
+
+const buildGenerationTrace = ({
+  providerId,
+  providerLabel,
+  mode,
+  operation,
+  passName,
+  candidateIndex,
+  variantIndex,
+  constraintBundle,
+  selectedImage
+}) => {
+  const characterReferenceCount = Array.isArray(constraintBundle?.characterPack?.referenceImages)
+    ? constraintBundle.characterPack.referenceImages.length
+    : 0;
+  const styleReferenceCount = Array.isArray(constraintBundle?.stylePack?.referenceImages)
+    ? constraintBundle.stylePack.referenceImages.length
+    : 0;
+
+  return {
+    providerId,
+    providerLabel,
+    providerUsed: providerId,
+    mode,
+    operation,
+    passName,
+    candidateIndex,
+    variantIndex,
+    pageNumber: constraintBundle?.page?.number || null,
+    referenceImageId: constraintBundle?.reference?.imageId || 'main-character-reference',
+    referenceImagePath: constraintBundle?.reference?.imagePath || null,
+    referenceImageUrl: constraintBundle?.reference?.imageUrl || null,
+    selectedImage: selectedImage || null,
+    characterReferenceCount,
+    styleReferenceCount,
+    hasCharacterReference: characterReferenceCount > 0,
+    hasStyleReference: styleReferenceCount > 0,
+    usedRemix: operation === 'remix',
+    fallbackOpenAIUsed: providerId === 'openai'
+  };
+};
 
 const getRuntimePipelineConfig = async () => {
   try {
@@ -99,6 +166,7 @@ const createProviderRequestRunner = ({
   provider,
   providerId,
   dalleParams,
+  passName = 'pass-1',
   operation = 'generate'
 }) => {
   const isTransientStatus = (statusCode) => {
@@ -106,7 +174,7 @@ const createProviderRequestRunner = ({
     return numericStatus >= 500 || numericStatus === 429 || numericStatus === 503 || numericStatus === 504;
   };
 
-  return async ({ prompt, strategyMetadata, mode, candidateIndex, selectedImage, variantIndex, constraintBundle }) => {
+  return async ({ prompt, strategyMetadata, mode, candidateIndex, selectedImage, variantIndex, constraintBundle, passName: requestPassName = passName }) => {
     const activeConstraintBundle = constraintBundle || {};
     const reference = activeConstraintBundle?.reference || {};
     const referenceImage = selectedImage || reference.imagePath || reference.imageUrl || null;
@@ -139,7 +207,20 @@ const createProviderRequestRunner = ({
       const payload = operation === 'remix'
         ? await provider.remixCandidate(requestOptions, { signal: controller.signal })
         : await provider.generateCandidate(requestOptions, { signal: controller.signal });
-      return normalizeProviderImagePayload(payload, { prompt });
+      return {
+        ...normalizeProviderImagePayload(payload, { prompt }),
+        generationTrace: buildGenerationTrace({
+          providerId,
+          providerLabel: provider.label,
+          mode,
+          operation,
+          passName: requestPassName,
+          candidateIndex: Number.isInteger(requestOptions.variantIndex) ? requestOptions.variantIndex : 0,
+          variantIndex: Number.isInteger(requestOptions.variantIndex) ? requestOptions.variantIndex : 0,
+          constraintBundle: activeConstraintBundle,
+          selectedImage: requestOptions.selectedImage || null
+        })
+      };
     } catch (error) {
       if (error?.name === 'AbortError') {
         const timeoutError = new Error(`Image generation request timed out after ${IMAGE_REQUEST_TIMEOUT_MS}ms`);
@@ -173,15 +254,39 @@ const isModerationBlocked = (error) => {
     && (message.includes('content filter') || message.includes('safety system'));
 };
 
-const isCandidateAcceptable = (candidate, minScore) => {
+const isCandidateAcceptable = (candidate, minScore, { providerId = 'openai', passName = 'pass-1', mode = 'page' } = {}) => {
   const evaluation = candidate?.evaluation || {};
   const flags = evaluation?.flags || {};
   const componentScores = evaluation?.componentScores || {};
   const groupScores = evaluation?.groupScores || {};
+  const generationTrace = candidate?.generationTrace || {};
+  const isIdeogramCandidate = providerId === 'ideogram';
+  const effectiveMinScore = isIdeogramCandidate
+    ? Math.max(
+        minScore,
+        getAcceptanceThreshold({ providerId, passName, mode })
+      )
+    : minScore;
+
+  const meetsProviderTraceRequirements = isIdeogramCandidate
+    ? generationTrace.hasCharacterReference === true
+      && generationTrace.hasStyleReference === true
+      && Number(generationTrace.characterReferenceCount || 0) > 0
+      && Number(generationTrace.styleReferenceCount || 0) > 0
+    : true;
+
+  const meetsIdeogramComponentRequirements = isIdeogramCandidate
+    ? Number(componentScores.identity || 0) >= 0.72
+      && Number(componentScores.style || 0) >= 0.32
+      && Number(componentScores.palette || 0) >= 0.32
+      && Number(componentScores.artifacts || 0) >= 0.82
+      && Number(groupScores.faceHair?.score || 0) >= 0.62
+      && Number(groupScores.clothing?.score || 0) >= 0.4
+    : true;
 
   return Boolean(candidate?.isConsistent)
     && evaluation?.hardRejected !== true
-    && Number(candidate?.consistencyScore || 0) >= minScore
+    && Number(candidate?.consistencyScore || 0) >= effectiveMinScore
     && Number(componentScores.identity || 0) >= 0.66
     && Number(componentScores.style || 0) >= AUTO_BEST_RESULT_MIN_STYLE_SCORE
     && Number(componentScores.palette || 0) >= AUTO_BEST_RESULT_MIN_PALETTE_SCORE
@@ -192,7 +297,9 @@ const isCandidateAcceptable = (candidate, minScore) => {
     && flags.hairstyleStable !== false
     && flags.styleStable !== false
     && flags.paletteStable !== false
-    && flags.parasiteElementsDetected !== true;
+    && flags.parasiteElementsDetected !== true
+    && meetsProviderTraceRequirements
+    && meetsIdeogramComponentRequirements;
 };
 
 const isFallbackEligible = (candidate) => {
@@ -257,6 +364,42 @@ const buildFallbackDecision = (variant, reason, { mode, pageNumber, attempts, pi
   };
 };
 
+const buildPageDecisionTrace = ({
+  pageNumber,
+  primaryProviderId,
+  secondaryProviderId,
+  selectedVariant,
+  pipelineVersion,
+  attempts,
+  passName
+}) => {
+  const generationTrace = selectedVariant?.generationTrace || {};
+  return {
+    pageNumber,
+    primaryProviderId,
+    providerUsed: generationTrace.providerUsed || primaryProviderId || null,
+    providerLabel: generationTrace.providerLabel || null,
+    fallbackProviderId: secondaryProviderId || null,
+    characterReferenceUsed: Boolean(generationTrace.hasCharacterReference),
+    styleReferenceUsed: Boolean(generationTrace.hasStyleReference),
+    remixUsed: Boolean(generationTrace.usedRemix),
+    fallbackOpenAIUsed: Boolean(generationTrace.fallbackOpenAIUsed),
+    scoreFinal: Number(selectedVariant?.consistencyScore || 0),
+    decision: selectedVariant?.finalDecisionType || null,
+    passName,
+    attempts: Array.isArray(attempts) ? attempts.length : 0,
+    pipelineVersion
+  };
+};
+
+const logPageDecision = (trace) => {
+  if (!trace) {
+    return;
+  }
+
+  console.info('[illustrationPipeline] page decision', trace);
+};
+
 const normalizeVariant = ({
   generated,
   evaluation,
@@ -301,6 +444,7 @@ const normalizeVariant = ({
   consistencyAnchorExpectedTokens: evaluation.anchorExpectedTokens,
   detectedNonNarrativeArtifacts: evaluation.detectedNonNarrativeArtifacts || [],
   inconsistencyReasons: evaluation.inconsistencyReasons || [],
+  generationTrace: generated.generationTrace || null,
   passName,
   consistencyAttempt,
   safeMode
@@ -311,6 +455,7 @@ const runCandidate = async ({
   candidateCount,
   passName,
   providerId,
+  mode,
   minAcceptanceScore,
   constraintBundle,
   requestGeneratedImage,
@@ -339,6 +484,7 @@ const runCandidate = async ({
       generated = await requestGeneratedImage({
         prompt,
         strategyMetadata,
+        passName,
         constraintBundle
       });
     } catch (requestError) {
@@ -386,7 +532,7 @@ const runCandidate = async ({
       bestVariant = variant;
     }
 
-    if (isCandidateAcceptable(variant, minAcceptanceScore)) {
+    if (isCandidateAcceptable(variant, minAcceptanceScore, { providerId, passName, mode })) {
       return { bestVariant: variant, accepted: true };
     }
 
@@ -406,6 +552,7 @@ const runPass = async ({
   passName,
   candidateCount,
   providerId,
+  mode,
   minAcceptanceScore,
   constraintBundle,
   requestGeneratedImage,
@@ -422,6 +569,7 @@ const runPass = async ({
         candidateCount,
         passName,
         providerId,
+        mode,
         minAcceptanceScore,
         constraintBundle,
         requestGeneratedImage,
@@ -434,12 +582,14 @@ const runPass = async ({
         stage: 'candidate-generation',
         passName,
         candidateIndex,
+        providerId,
         generator: result.bestVariant?.generatorStrategy?.label || null,
         accepted: result.accepted,
         fallbackCandidate: !result.accepted,
         score: result.bestVariant?.consistencyScore ?? null,
         safeMode: Boolean(result.bestVariant?.safeMode),
         hardRejected: Boolean(result.bestVariant?.hardRejected),
+        generationTrace: result.bestVariant?.generationTrace || null,
         status: result.accepted ? 'accepted' : 'scored'
       });
     } catch (error) {
@@ -447,6 +597,7 @@ const runPass = async ({
         stage: 'candidate-generation',
         passName,
         candidateIndex,
+        providerId,
         status: 'failed',
         error: error?.message || 'Unknown error'
       });
@@ -460,7 +611,7 @@ const runPass = async ({
     console.warn(
       `[illustrationPipeline] Page ${constraintBundle?.page?.number}: all candidates rejected in ${passName}; no candidate survived request generation.`
     );
-  } else if (!isCandidateAcceptable(bestVariant, minAcceptanceScore)) {
+  } else if (!isCandidateAcceptable(bestVariant, minAcceptanceScore, { providerId, passName, mode })) {
     console.warn(
       `[illustrationPipeline] Page ${constraintBundle?.page?.number}: all candidates rejected in ${passName}; bestScore=${Number(bestVariant?.consistencyScore || 0).toFixed(3)} hardRejectSeverity=${bestVariant?.hardRejectSeverity || 'none'}.`
     );
@@ -472,12 +623,13 @@ const runPass = async ({
     attempts,
     bestVariant,
     bestFallbackVariant,
-    accepted: isCandidateAcceptable(bestVariant, minAcceptanceScore)
+    accepted: isCandidateAcceptable(bestVariant, minAcceptanceScore, { providerId, passName, mode })
   };
 };
 
 const runRemixPass = async ({
   providerId,
+  mode,
   minAcceptanceScore,
   constraintBundle,
   requestRemixImage,
@@ -504,6 +656,7 @@ const runRemixPass = async ({
     prompt,
     strategyMetadata,
     mode: 'remix',
+    passName: 'remix',
     candidateIndex: baseVariant.variantIndex ?? 0,
     selectedImage: baseVariant.url || baseVariant.localPath || baseVariant.originalUrl || constraintBundle?.reference?.imagePath || constraintBundle?.reference?.imageUrl || null,
     variantIndex: baseVariant.variantIndex ?? 0,
@@ -536,7 +689,7 @@ const runRemixPass = async ({
 
   return {
     variant,
-    accepted: isCandidateAcceptable(variant, minAcceptanceScore)
+    accepted: isCandidateAcceptable(variant, minAcceptanceScore, { providerId, passName: 'remix', mode })
   };
 };
 
@@ -585,13 +738,15 @@ export async function generateIllustrationWithAutoPipeline({
   const requestGeneratedImage = createProviderRequestRunner({
     provider: primaryProvider,
     providerId: primaryProviderId,
-    dalleParams
+    dalleParams,
+    passName: 'pass-1'
   });
   const requestRemixImage = primaryProvider.supportsRemix
     ? createProviderRequestRunner({
         provider: primaryProvider,
         providerId: primaryProviderId,
         dalleParams,
+        passName: 'remix',
         operation: 'remix'
       })
     : null;
@@ -599,7 +754,8 @@ export async function generateIllustrationWithAutoPipeline({
     ? createProviderRequestRunner({
         provider: secondaryProvider,
         providerId: secondaryProviderId,
-        dalleParams
+        dalleParams,
+        passName: 'fallback'
       })
     : null;
 
@@ -628,6 +784,7 @@ export async function generateIllustrationWithAutoPipeline({
       passName: 'pass-1',
       candidateCount,
       providerId: primaryProviderId,
+      mode,
       minAcceptanceScore: AUTO_BEST_RESULT_PASS1_ACCEPTANCE_SCORE,
       constraintBundle: finalConstraintBundle,
       requestGeneratedImage,
@@ -646,6 +803,16 @@ export async function generateIllustrationWithAutoPipeline({
         variants: pass1.variants,
         allVariants: pass1.variants
       };
+      const pageDecision = buildPageDecisionTrace({
+        pageNumber: page.number,
+        primaryProviderId,
+        secondaryProviderId,
+        selectedVariant,
+        pipelineVersion: '3.0',
+        attempts: passResults.flatMap((result) => result.attempts),
+        passName: 'pass-1'
+      });
+      logPageDecision(pageDecision);
 
       return {
         selectedVariant,
@@ -662,7 +829,8 @@ export async function generateIllustrationWithAutoPipeline({
           version: '3.0',
           passedIn: 'pass-1',
           constraintBundle: summarizeConstraintBundle(finalConstraintBundle),
-          passResults
+          passResults,
+          pageDecision
         }
       };
     }
@@ -671,6 +839,7 @@ export async function generateIllustrationWithAutoPipeline({
       passName: 'pass-2',
       candidateCount: pass2CandidateCount,
       providerId: primaryProviderId,
+      mode,
       minAcceptanceScore: AUTO_BEST_RESULT_PASS2_ACCEPTANCE_SCORE,
       constraintBundle: finalConstraintBundle,
       requestGeneratedImage,
@@ -688,6 +857,7 @@ export async function generateIllustrationWithAutoPipeline({
             minAcceptanceScore: AUTO_BEST_RESULT_PASS2_ACCEPTANCE_SCORE,
             constraintBundle: finalConstraintBundle,
             requestRemixImage,
+            mode,
             dalleParams,
             baseVariant: remixSource
           });
@@ -701,6 +871,7 @@ export async function generateIllustrationWithAutoPipeline({
                 providerId: primaryProviderId,
                 accepted: remixResult.accepted,
                 score: remixResult.variant?.consistencyScore ?? null,
+                generationTrace: remixResult.variant?.generationTrace || null,
                 status: remixResult.accepted ? 'accepted' : 'scored'
               }],
               bestVariant: remixResult.variant,
@@ -718,6 +889,16 @@ export async function generateIllustrationWithAutoPipeline({
                 variants: [remixResult.variant],
                 allVariants: [remixResult.variant]
               };
+              const pageDecision = buildPageDecisionTrace({
+                pageNumber: page.number,
+                primaryProviderId,
+                secondaryProviderId,
+                selectedVariant,
+                pipelineVersion: '3.0',
+                attempts: passResults.flatMap((result) => result.attempts),
+                passName: 'remix'
+              });
+              logPageDecision(pageDecision);
 
               return {
                 selectedVariant,
@@ -734,7 +915,8 @@ export async function generateIllustrationWithAutoPipeline({
                   version: '3.0',
                   passedIn: 'remix',
                   constraintBundle: summarizeConstraintBundle(finalConstraintBundle),
-                  passResults
+                  passResults,
+                  pageDecision
                 }
               };
             }
@@ -747,6 +929,7 @@ export async function generateIllustrationWithAutoPipeline({
               stage: 'remix',
               providerId: primaryProviderId,
               status: 'failed',
+              generationTrace: null,
               error: error?.message || 'Unknown remix error'
             }],
             bestVariant: null,
@@ -759,9 +942,10 @@ export async function generateIllustrationWithAutoPipeline({
 
     if (!pass2.accepted && requestFallbackImage) {
       const fallbackPass = await runPass({
-        passName: 'pass-1',
+        passName: 'fallback',
         candidateCount: 1,
         providerId: secondaryProviderId,
+        mode,
         minAcceptanceScore: AUTO_BEST_RESULT_PASS1_ACCEPTANCE_SCORE,
         constraintBundle: finalConstraintBundle,
         requestGeneratedImage: requestFallbackImage,
@@ -794,6 +978,16 @@ export async function generateIllustrationWithAutoPipeline({
           variants: fallbackPass.variants,
           allVariants: fallbackPass.variants
         };
+        const pageDecision = buildPageDecisionTrace({
+          pageNumber: page.number,
+          primaryProviderId,
+          secondaryProviderId,
+          selectedVariant,
+          pipelineVersion: '3.0',
+          attempts: passResults.flatMap((result) => result.attempts),
+          passName: 'fallback'
+        });
+        logPageDecision(pageDecision);
 
         return {
           selectedVariant,
@@ -810,7 +1004,8 @@ export async function generateIllustrationWithAutoPipeline({
             version: '3.0',
             passedIn: secondaryProviderId,
             constraintBundle: summarizeConstraintBundle(finalConstraintBundle),
-            passResults
+            passResults,
+            pageDecision
           }
         };
       }
@@ -861,6 +1056,16 @@ export async function generateIllustrationWithAutoPipeline({
               `[illustrationPipeline] Page ${page.number}: all candidates rejected and no fallback-eligible candidate exists.`
             );
           } else {
+            const pageDecision = buildPageDecisionTrace({
+              pageNumber: page.number,
+              primaryProviderId,
+              secondaryProviderId,
+              selectedVariant: fallbackDecision.selectedVariant,
+              pipelineVersion: '3.0',
+              attempts: fallbackDecision.attempts,
+              passName: finalPass.passName
+            });
+            logPageDecision(pageDecision);
             return {
               selectedVariant: fallbackDecision.selectedVariant,
               variants,
@@ -876,11 +1081,22 @@ export async function generateIllustrationWithAutoPipeline({
                 version: '3.0',
                 passedIn: finalPass.passName,
                 constraintBundle: summarizeConstraintBundle(finalConstraintBundle),
-                passResults
+                passResults,
+                pageDecision
               }
             };
           }
         } else {
+          const pageDecision = buildPageDecisionTrace({
+            pageNumber: page.number,
+            primaryProviderId,
+            secondaryProviderId,
+            selectedVariant,
+            pipelineVersion: '3.0',
+            attempts: passResults.flatMap((result) => result.attempts),
+            passName: 'pass-2'
+          });
+          logPageDecision(pageDecision);
           return {
             selectedVariant,
             variants,
@@ -896,7 +1112,8 @@ export async function generateIllustrationWithAutoPipeline({
               version: '3.0',
               passedIn: 'pass-2',
               constraintBundle: summarizeConstraintBundle(finalConstraintBundle),
-              passResults
+              passResults,
+              pageDecision
             }
           };
         }
@@ -916,6 +1133,16 @@ export async function generateIllustrationWithAutoPipeline({
         });
 
         if (fallbackDecision) {
+          const pageDecision = buildPageDecisionTrace({
+            pageNumber: page.number,
+            primaryProviderId,
+            secondaryProviderId,
+            selectedVariant: fallbackDecision.selectedVariant,
+            pipelineVersion: '3.0',
+            attempts: fallbackDecision.attempts,
+            passName: finalPass.passName
+          });
+          logPageDecision(pageDecision);
           return {
             selectedVariant: fallbackDecision.selectedVariant,
             variants,
@@ -931,7 +1158,8 @@ export async function generateIllustrationWithAutoPipeline({
               version: '3.0',
               passedIn: finalPass.passName,
               constraintBundle: summarizeConstraintBundle(finalConstraintBundle),
-              passResults
+              passResults,
+              pageDecision
             }
           };
         }
@@ -948,6 +1176,16 @@ export async function generateIllustrationWithAutoPipeline({
         attempts: passResults.flatMap((result) => result.attempts),
         pipelineVersion: '3.0'
       });
+      const pageDecision = buildPageDecisionTrace({
+        pageNumber: page.number,
+        primaryProviderId,
+        secondaryProviderId,
+        selectedVariant: fallbackDecision.selectedVariant,
+        pipelineVersion: '3.0',
+        attempts: fallbackDecision.attempts,
+        passName: bestFallbackCandidate.passName
+      });
+      logPageDecision(pageDecision);
 
       return {
         selectedVariant: fallbackDecision.selectedVariant,
@@ -964,7 +1202,8 @@ export async function generateIllustrationWithAutoPipeline({
           version: '3.0',
           passedIn: bestFallbackCandidate.passName,
           constraintBundle: summarizeConstraintBundle(finalConstraintBundle),
-          passResults
+          passResults,
+          pageDecision
         }
       };
     }
