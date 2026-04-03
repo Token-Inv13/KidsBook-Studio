@@ -1,4 +1,5 @@
 const TEMP_DALLE_URL_REGEX = /^https?:\/\/oaidalleapiprodscus\.blob\.core\.windows\.net\/private\//i;
+const SAFE_FILE_URL_PREFIX = 'safe-file://';
 
 export const isTemporaryDalleUrl = (url) => {
   return typeof url === 'string' && TEMP_DALLE_URL_REGEX.test(url);
@@ -25,12 +26,33 @@ export const toFileUrl = (localPath) => {
   return `file://${normalizedPath}`;
 };
 
+export const toSafeFileUrl = (value) => {
+  if (!value || typeof value !== 'string') {
+    return null;
+  }
+
+  if (value.startsWith(SAFE_FILE_URL_PREFIX) || value.startsWith('data:') || value.startsWith('http://') || value.startsWith('https://')) {
+    return value;
+  }
+
+  const localPath = value.startsWith('file://')
+    ? decodeURIComponent(value.replace(/^file:\/+/, '')).replace(/^\/([A-Za-z]:\/)/, '$1')
+    : value;
+
+  const normalizedPath = localPath.replace(/\\/g, '/');
+  if (/^[A-Za-z]:\//.test(normalizedPath)) {
+    return `${SAFE_FILE_URL_PREFIX}/${encodeURI(normalizedPath)}`;
+  }
+
+  return `${SAFE_FILE_URL_PREFIX}${encodeURI(normalizedPath.startsWith('/') ? normalizedPath : `/${normalizedPath}`)}`;
+};
+
 export const isRenderableImageUrl = (url) => {
   if (!url || typeof url !== 'string') {
     return false;
   }
 
-  if (url.startsWith('file://') || url.startsWith('data:')) {
+  if (url.startsWith(SAFE_FILE_URL_PREFIX) || url.startsWith('data:')) {
     return true;
   }
 
@@ -56,10 +78,10 @@ export const resolvePageImageUrl = (page) => {
   }
 
   const candidates = [
-    toFileUrl(page.imageLocalPath),
-    toFileUrl(page.illustration?.localPath),
-    page.imageUrl,
-    page.illustration?.url
+    toSafeFileUrl(page.imageLocalPath),
+    toSafeFileUrl(page.illustration?.localPath),
+    toSafeFileUrl(page.imageUrl),
+    toSafeFileUrl(page.illustration?.url)
   ];
 
   return candidates.find((url) => isRenderableImageUrl(url)) || null;
@@ -71,9 +93,9 @@ export const resolveCharacterReferenceImageUrl = (mainCharacter) => {
   }
 
   const candidates = [
-    toFileUrl(mainCharacter.referenceImagePath),
+    toSafeFileUrl(mainCharacter.referenceImagePath),
     toDataUrl(mainCharacter.referenceImageBase64, mainCharacter.referenceImageMimeType),
-    mainCharacter.referenceImage
+    toSafeFileUrl(mainCharacter.referenceImage)
   ];
 
   return candidates.find((url) => isRenderableImageUrl(url)) || null;

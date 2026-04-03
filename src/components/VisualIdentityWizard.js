@@ -175,7 +175,7 @@ Mood: friendly, approachable, expressive
           console.log('[VisualIdentityWizard] Download result:', downloadResult);
           
           if (downloadResult && downloadResult.success) {
-            localImagePath = `file://${imagePath}`;
+            localImagePath = imagePath;
             console.log('[VisualIdentityWizard] Reference image saved successfully to:', imagePath);
             console.log('[VisualIdentityWizard] Using local image path:', localImagePath);
             if (window.electron.fs.readFileBase64) {

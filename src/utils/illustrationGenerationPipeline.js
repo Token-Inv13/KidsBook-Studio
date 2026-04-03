@@ -151,6 +151,20 @@ const isCandidateAcceptable = (candidate, minScore) => {
     && flags.parasiteElementsDetected !== true;
 };
 
+const isFallbackEligible = (candidate) => {
+  if (!candidate) {
+    return false;
+  }
+
+  return candidate.hardRejectSeverity !== 'strong'
+    && candidate.evaluation?.hardRejectSeverity !== 'strong';
+};
+
+const selectBestFallbackVariant = (variants = []) => {
+  const preferredFallback = selectBestIllustrationVariant(variants.filter(isFallbackEligible));
+  return preferredFallback || selectBestIllustrationVariant(variants);
+};
+
 const shouldEscalateToSafeMode = (candidate, minAcceptanceScore) => {
   const evaluation = candidate?.evaluation || {};
   const componentScores = evaluation?.componentScores || {};
@@ -180,7 +194,7 @@ const buildFallbackDecision = (variant, reason, { mode, pageNumber, attempts, pi
   };
 
   console.warn(
-    `[illustrationPipeline] Page ${pageNumber}: ${reason} -> fallback triggered (${decisionType}), batch continues after fallback.`
+    `[illustrationPipeline] Page ${pageNumber}: ${reason} -> fallback triggered (${decisionType}), fallback used, batch continues after fallback. hardRejectSeverity=${variant.hardRejectSeverity || variant.evaluation?.hardRejectSeverity || 'none'}`
   );
   console.info(
     `[illustrationPipeline] Page ${pageNumber}: fallback accepted with score=${Number(variant.consistencyScore || 0).toFixed(3)} safeMode=${variant.safeMode ? 'true' : 'false'} mode=${mode}.`
@@ -392,11 +406,24 @@ const runPass = async ({
   }
 
   const bestVariant = selectBestIllustrationVariant(variants);
+  const bestFallbackVariant = selectBestFallbackVariant(variants);
+
+  if (variants.length === 0) {
+    console.warn(
+      `[illustrationPipeline] Page ${constraintBundle?.page?.number}: all candidates rejected in ${passName}; no candidate survived request generation.`
+    );
+  } else if (!isCandidateAcceptable(bestVariant, minAcceptanceScore)) {
+    console.warn(
+      `[illustrationPipeline] Page ${constraintBundle?.page?.number}: all candidates rejected in ${passName}; bestScore=${Number(bestVariant?.consistencyScore || 0).toFixed(3)} hardRejectSeverity=${bestVariant?.hardRejectSeverity || 'none'}.`
+    );
+  }
+
   return {
     passName,
     variants,
     attempts,
     bestVariant,
+    bestFallbackVariant,
     accepted: isCandidateAcceptable(bestVariant, minAcceptanceScore)
   };
 };
@@ -510,13 +537,14 @@ export async function generateIllustrationWithAutoPipeline({
     const finalPass = pass2.bestVariant ? pass2 : pass1.bestVariant ? pass1 : pass2;
     if (finalPass.bestVariant) {
       const variants = finalPass.variants.length > 0 ? finalPass.variants : [finalPass.bestVariant];
-      const currentBestFallback = bestFallbackCandidate?.variant
-        ? selectBestIllustrationVariant([bestFallbackCandidate.variant, finalPass.bestVariant])
-        : finalPass.bestVariant;
+      const fallbackSourceVariant = finalPass.bestFallbackVariant || null;
+      const currentBestFallback = bestFallbackCandidate?.variant && fallbackSourceVariant
+        ? selectBestIllustrationVariant([bestFallbackCandidate.variant, fallbackSourceVariant])
+        : (fallbackSourceVariant || bestFallbackCandidate?.variant || null);
 
-      if (currentBestFallback === finalPass.bestVariant) {
+      if (currentBestFallback && currentBestFallback === fallbackSourceVariant) {
         bestFallbackCandidate = {
-          variant: finalPass.bestVariant,
+          variant: fallbackSourceVariant,
           variants,
           passName: finalPass.passName
         };
@@ -536,54 +564,60 @@ export async function generateIllustrationWithAutoPipeline({
         if (!pass2.accepted) {
           const fallbackReason = pass2.variants.length === 0 && pass1.variants.length > 0
             ? 'safe mode produced no strictly acceptable candidate; reusing least bad pass-1 candidate'
-            : finalPass.bestVariant.safeMode
+            : (fallbackSourceVariant?.safeMode || bestFallbackCandidate?.variant?.safeMode)
               ? 'safe mode fallback accepted'
               : 'all candidates rejected -> fallback triggered';
-          const fallbackDecision = buildFallbackDecision(finalPass.bestVariant, fallbackReason, {
+          const fallbackDecision = buildFallbackDecision(fallbackSourceVariant || bestFallbackCandidate?.variant, fallbackReason, {
             mode,
             pageNumber: page.number,
             attempts: passResults.flatMap((result) => result.attempts),
             pipelineVersion: '2.5'
           });
 
+          if (!fallbackDecision) {
+            console.warn(
+              `[illustrationPipeline] Page ${page.number}: all candidates rejected and no fallback-eligible candidate exists.`
+            );
+          } else {
+            return {
+              selectedVariant: fallbackDecision.selectedVariant,
+              variants,
+              scene: selectedVariant.sceneDescription,
+              dalleParams,
+              identityHash: finalConstraintBundle.identityHash,
+              identityVersion: finalConstraintBundle.spec?.version || null,
+              fallbackAccepted: fallbackDecision.fallbackAccepted,
+              fallbackReason: fallbackDecision.fallbackReason,
+              finalDecisionType: fallbackDecision.finalDecisionType,
+              attempts: fallbackDecision.attempts,
+              pipeline: {
+                version: '2.5',
+                passedIn: finalPass.passName,
+                constraintBundle: summarizeConstraintBundle(finalConstraintBundle),
+                passResults
+              }
+            };
+          }
+        } else {
           return {
-            selectedVariant: fallbackDecision.selectedVariant,
+            selectedVariant,
             variants,
             scene: selectedVariant.sceneDescription,
             dalleParams,
             identityHash: finalConstraintBundle.identityHash,
             identityVersion: finalConstraintBundle.spec?.version || null,
-            fallbackAccepted: fallbackDecision.fallbackAccepted,
-            fallbackReason: fallbackDecision.fallbackReason,
-            finalDecisionType: fallbackDecision.finalDecisionType,
-            attempts: fallbackDecision.attempts,
+            fallbackAccepted: false,
+            fallbackReason: null,
+            finalDecisionType: 'accepted',
+            attempts: passResults.flatMap((result) => result.attempts),
             pipeline: {
               version: '2.5',
-              passedIn: finalPass.passName,
+              passedIn: 'pass-2',
               constraintBundle: summarizeConstraintBundle(finalConstraintBundle),
               passResults
             }
           };
         }
-
-        return {
-          selectedVariant,
-          variants,
-          scene: selectedVariant.sceneDescription,
-          dalleParams,
-          identityHash: finalConstraintBundle.identityHash,
-          identityVersion: finalConstraintBundle.spec?.version || null,
-          fallbackAccepted: false,
-          fallbackReason: null,
-          finalDecisionType: 'accepted',
-          attempts: passResults.flatMap((result) => result.attempts),
-          pipeline: {
-            version: '2.5',
-            passedIn: pass2.accepted ? 'pass-2' : finalPass.passName,
-            constraintBundle: summarizeConstraintBundle(finalConstraintBundle),
-            passResults
-          }
-        };
       }
     }
 

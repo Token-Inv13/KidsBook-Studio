@@ -1,9 +1,25 @@
-const { app, BrowserWindow, ipcMain, dialog, Menu, shell, session } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Menu, shell, session, protocol, net } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { pathToFileURL } = require('url');
 const Store = require('electron-store');
 const keytar = require('keytar');
 const { startOpenAIService, stopOpenAIService } = require('./openai-service');
+
+const SAFE_FILE_SCHEME = 'safe-file';
+
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: SAFE_FILE_SCHEME,
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
+      stream: true
+    }
+  }
+]);
 
 function getSafeDocumentsPath() {
   try {
@@ -21,6 +37,8 @@ if (!fs.existsSync(userDataPath)) {
   fs.mkdirSync(userDataPath, { recursive: true });
 }
 app.setPath('userData', userDataPath);
+app.disableHardwareAcceleration();
+app.commandLine.appendSwitch('disable-gpu');
 
 // Create Projects directory
 const projectsPath = path.join(userDataPath, 'Projects');
@@ -38,7 +56,7 @@ const PRODUCTION_CSP = [
   "default-src 'self'",
   "script-src 'self'",
   "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: blob: https: http:",
+  `img-src 'self' data: blob: https: http: ${SAFE_FILE_SCHEME}:`,
   "connect-src 'self' http://localhost:3001 http://127.0.0.1:3001 http://localhost:3002 http://127.0.0.1:3002 http://localhost:3003 http://127.0.0.1:3003 https:",
   "font-src 'self' data:",
   "object-src 'none'",
@@ -90,6 +108,33 @@ function ensureProductionCsp(indexHtmlPath) {
   }
 }
 
+function decodeSafeFileRequestPath(requestUrl) {
+  const parsed = new URL(requestUrl);
+  const rawPath = decodeURIComponent(`${parsed.host || ''}${parsed.pathname || ''}`);
+
+  if (!rawPath) {
+    throw new Error('Missing safe-file path');
+  }
+
+  const normalizedWindowsPath = /^\/[A-Za-z]:\//.test(rawPath)
+    ? rawPath.slice(1)
+    : rawPath;
+
+  return normalizeAbsolutePath(normalizedWindowsPath);
+}
+
+function registerSafeFileProtocol() {
+  protocol.handle(SAFE_FILE_SCHEME, async (request) => {
+    try {
+      const safePath = decodeSafeFileRequestPath(request.url);
+      return net.fetch(pathToFileURL(safePath).toString());
+    } catch (error) {
+      console.warn('[Main] safe-file request rejected:', error.message);
+      return new Response('Not found', { status: 404 });
+    }
+  });
+}
+
 function createWindow() {
   const isDev = !app.isPackaged;
   const useLocalBuild = process.env.ELECTRON_USE_LOCAL_BUILD === '1';
@@ -102,10 +147,10 @@ function createWindow() {
         responseHeaders: {
           ...details.responseHeaders,
           'Content-Security-Policy': [
-            "default-src 'self'; " +
+              "default-src 'self'; " +
               "script-src 'self'; " +
               "style-src 'self' 'unsafe-inline'; " +
-              "img-src 'self' data: blob: https: http:; " +
+              `img-src 'self' data: blob: https: http: ${SAFE_FILE_SCHEME}:; ` +
               "connect-src 'self' http://localhost:3001 http://127.0.0.1:3001 http://localhost:3002 http://127.0.0.1:3002 http://localhost:3003 http://127.0.0.1:3003 https:; " +
               "font-src 'self' data:; " +
               "object-src 'none'; " +
@@ -246,6 +291,8 @@ app.whenReady().then(async () => {
   } catch (error) {
     console.error('Failed to start OpenAI service:', error);
   }
+
+  registerSafeFileProtocol();
 
   createWindow();
 

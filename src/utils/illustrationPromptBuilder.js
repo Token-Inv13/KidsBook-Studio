@@ -21,7 +21,7 @@ const NON_NARRATIVE_ARTIFACT_PATTERNS = [
   {
     key: 'colorPalettePanel',
     label: 'color palette panel',
-    pattern: /\b(color palette panel|palette panel|palette chart|color chart|swatch(?:es)?|color swatches?)\b/i
+    pattern: /\b(color palette panel|palette panel|palette chart|color chart|color swatches?|swatch sheet|swatch panel)\b/i
   },
   {
     key: 'uiElements',
@@ -41,7 +41,7 @@ const NON_NARRATIVE_ARTIFACT_PATTERNS = [
   {
     key: 'gridLayout',
     label: 'grid layout',
-    pattern: /\b(grid|grid layout|panel grid|layout grid|gridded layout)\b/i
+    pattern: /\b(character sheet grid|grid layout|panel grid|layout grid|gridded layout|thumbnail grid|storybook grid)\b/i
   },
   {
     key: 'multipleCharacterVariations',
@@ -51,22 +51,22 @@ const NON_NARRATIVE_ARTIFACT_PATTERNS = [
   {
     key: 'conceptPresentation',
     label: 'layout or concept art presentation',
-    pattern: /\b(layout presentation|layout board|concept art presentation|concept board|presentation board|design presentation)\b/i
+    pattern: /\b(layout presentation|layout board|concept art presentation|concept board|presentation board|design presentation|art presentation board)\b/i
   },
   {
     key: 'calloutLabels',
     label: 'callout labels',
-    pattern: /\b(labeled callouts?|annotation(?:s)?|annotated arrows?|labeled diagram|notes around the character|labels?|callouts?)\b/i
+    pattern: /\b(labeled callouts?|annotation(?:s)?|annotated arrows?|labeled diagram|notes around the character|editorial callouts?)\b/i
   },
   {
     key: 'multiPanelComposition',
     label: 'multi-panel composition',
-    pattern: /\b(triptych|diptych|split screen|split layout|three views|front view|side view|back view|pose lineup|multi-panel|panel composition)\b/i
+    pattern: /\b(triptych|diptych|split screen|split layout|three views|multi-panel|panel composition|front[,/ ]+side[,/ ]+back view|front and side view|front side back turnaround)\b/i
   },
   {
     key: 'repetitiveComposition',
     label: 'repetitive composition',
-    pattern: /\b(repeating panels?|repeated poses?|same character repeated|multiple copies of the character|lineup of poses)\b/i
+    pattern: /\b(repeating panels?|repeated poses?|same character repeated|multiple copies of the character|lineup of poses|pose lineup)\b/i
   },
   {
     key: 'nonNarrativeBackdrop',
@@ -266,7 +266,7 @@ const explicitDriftPenaltyRules = [
   {
     key: 'parasiteElements',
     label: 'parasite elements',
-    pattern: /\b(text|logo|watermark|palette chart|character sheet|concept board|ui elements?)\b/i,
+    pattern: /\b(logo|watermark|palette chart|character sheet|concept board|ui elements?|reference board|split layout|multi-panel)\b/i,
     penalty: 0.4
   }
 ];

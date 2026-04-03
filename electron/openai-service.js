@@ -18,6 +18,7 @@ let openaiClient;
 
 const CHAT_TIMEOUT_MS = 45_000;
 const IMAGE_TIMEOUT_MS = 120_000;
+const MAX_DALLE_PROMPT_LENGTH = 3900;
 
 const withTimeout = async (promise, timeoutMs, label) => {
   let timeoutId;
@@ -35,6 +36,36 @@ const withTimeout = async (promise, timeoutMs, label) => {
   } finally {
     clearTimeout(timeoutId);
   }
+};
+
+const normalizePromptWhitespace = (prompt) => {
+  if (typeof prompt !== 'string') {
+    return '';
+  }
+
+  return prompt.replace(/\s+/g, ' ').trim();
+};
+
+const trimPromptForImageGeneration = (prompt, maxLength = MAX_DALLE_PROMPT_LENGTH) => {
+  const normalized = normalizePromptWhitespace(prompt);
+  if (normalized.length <= maxLength) {
+    return {
+      prompt: normalized,
+      trimmed: false,
+      originalLength: normalized.length
+    };
+  }
+
+  const tailBudget = Math.min(650, Math.floor(maxLength * 0.18));
+  const separator = ' [...] ';
+  const headBudget = Math.max(0, maxLength - tailBudget - separator.length);
+  const trimmedPrompt = `${normalized.slice(0, headBudget).trimEnd()}${separator}${normalized.slice(-tailBudget).trimStart()}`;
+
+  return {
+    prompt: trimmedPrompt,
+    trimmed: true,
+    originalLength: normalized.length
+  };
 };
 
 async function initializeOpenAI() {
@@ -144,7 +175,8 @@ async function startOpenAIService() {
         size = '1024x1024',
         quality = 'standard',
         referenceImageId = null,
-        referenceImagePath = null
+        referenceImagePath = null,
+        generatorMode = 'text-only'
       } = req.body;
 
       if (!prompt) {
@@ -154,23 +186,44 @@ async function startOpenAIService() {
         });
       }
 
+      const promptPayload = trimPromptForImageGeneration(prompt);
+      const payloadToOpenAI = {
+        model: 'dall-e-3',
+        prompt: promptPayload.prompt,
+        size,
+        n: 1,
+        quality
+      };
+
+      console.log(`[OpenAI Service] [${requestId}] payload sent to OpenAI`, {
+        prompt: payloadToOpenAI.prompt,
+        promptLength: payloadToOpenAI.prompt.length,
+        originalPromptLength: promptPayload.originalLength,
+        promptTrimmed: promptPayload.trimmed,
+        referenceImagePath,
+        options: {
+          size,
+          quality,
+          generatorMode,
+          referenceImageId
+        }
+      });
+
       console.log(`[OpenAI Service] [${requestId}] Calling DALL-E 3 API`, {
         size,
         quality,
-        promptLength: prompt.length,
-        promptPreview: getPromptPreview(prompt),
+        promptLength: payloadToOpenAI.prompt.length,
+        originalPromptLength: promptPayload.originalLength,
+        promptTrimmed: promptPayload.trimmed,
+        promptPreview: getPromptPreview(payloadToOpenAI.prompt),
         referenceImageId,
-        hasReferenceImagePath: Boolean(referenceImagePath)
+        referenceImagePath,
+        hasReferenceImagePath: Boolean(referenceImagePath),
+        generatorMode
       });
 
       const response = await withTimeout(
-        openaiClient.images.generate({
-          model: 'dall-e-3',
-          prompt,
-          size,
-          n: 1,
-          quality
-        }),
+        openaiClient.images.generate(payloadToOpenAI),
         IMAGE_TIMEOUT_MS,
         'Image generation request'
       );
