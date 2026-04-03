@@ -16,6 +16,27 @@ const getPromptPreview = (prompt) => {
 let server;
 let openaiClient;
 
+const CHAT_TIMEOUT_MS = 45_000;
+const IMAGE_TIMEOUT_MS = 120_000;
+
+const withTimeout = async (promise, timeoutMs, label) => {
+  let timeoutId;
+
+  const timeoutPromise = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => {
+      const error = new Error(`${label} timed out after ${timeoutMs}ms`);
+      error.code = 'ETIMEDOUT';
+      reject(error);
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    clearTimeout(timeoutId);
+  }
+};
+
 async function initializeOpenAI() {
   const apiKey = await keytar.getPassword(SERVICE_NAME, ACCOUNT_NAME);
   if (apiKey) {
@@ -72,12 +93,16 @@ async function startOpenAIService() {
       
       console.log('[OpenAI Service] Calling OpenAI API...');
 
-      const response = await openaiClient.chat.completions.create({
-        model: 'gpt-4',
-        messages: messages,
-        temperature: temperature,
-        max_tokens: max_tokens
-      });
+      const response = await withTimeout(
+        openaiClient.chat.completions.create({
+          model: 'gpt-4',
+          messages: messages,
+          temperature: temperature,
+          max_tokens: max_tokens
+        }),
+        CHAT_TIMEOUT_MS,
+        'Chat request'
+      );
 
       console.log('[OpenAI Service] OpenAI API response received');
 
@@ -88,7 +113,7 @@ async function startOpenAIService() {
       });
     } catch (error) {
       console.error('[OpenAI Service] Chat error:', error);
-      res.status(500).json({ 
+      res.status(error?.code === 'ETIMEDOUT' ? 504 : 500).json({ 
         success: false, 
         error: error.message || 'Internal server error' 
       });
@@ -138,13 +163,17 @@ async function startOpenAIService() {
         hasReferenceImagePath: Boolean(referenceImagePath)
       });
 
-      const response = await openaiClient.images.generate({
-        model: 'dall-e-3',
-        prompt,
-        size,
-        n: 1,
-        quality
-      });
+      const response = await withTimeout(
+        openaiClient.images.generate({
+          model: 'dall-e-3',
+          prompt,
+          size,
+          n: 1,
+          quality
+        }),
+        IMAGE_TIMEOUT_MS,
+        'Image generation request'
+      );
 
       console.log(`[OpenAI Service] [${requestId}] Image generated successfully`);
 

@@ -14,6 +14,8 @@
     "build:electron": "npm run build && electron-builder",
     "dist": "npm run build && electron-builder --win",
     "dist:dir": "npm run build && electron-builder --win --dir",
+    "test:e2e": "playwright test -c e2e-tests/playwright.config.js",
+    "test:e2e:headed": "playwright test -c e2e-tests/playwright.config.js --headed",
     "smoke:prod": "node scripts/smoke-prod.js",
     "smoke:prod:build": "npm run dist:dir && npm run smoke:prod",
     "test": "react-scripts test",
@@ -96,6 +98,7 @@
     "uuid": "^9.0.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.59.1",
     "@testing-library/react": "^16.3.0",
     "autoprefixer": "^10.4.16",
     "concurrently": "^8.2.2",

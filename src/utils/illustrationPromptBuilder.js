@@ -357,10 +357,29 @@ const detectNonNarrativeArtifactPatterns = (value) => {
     return [];
   }
 
+  const isNegatedArtifactMention = (matchIndex) => {
+    const contextStart = Math.max(0, matchIndex - 120);
+    const context = normalized.slice(contextStart, matchIndex);
+    const clauseStart = Math.max(
+      context.lastIndexOf('.'),
+      context.lastIndexOf('!'),
+      context.lastIndexOf('?'),
+      context.lastIndexOf('\n')
+    );
+    const clause = clauseStart >= 0 ? context.slice(clauseStart + 1) : context;
+
+    return /\b(no|without|avoid|excluding|exclude|omit|sans|pas de|aucun(?:e)?|do not include|don't include|not a|not an)\b/i.test(clause);
+  };
+
   return NON_NARRATIVE_ARTIFACT_PATTERNS.reduce((matches, rule) => {
     const matched = normalized.match(rule.pattern);
 
     if (!matched) {
+      return matches;
+    }
+
+    const matchIndex = normalized.search(rule.pattern);
+    if (matchIndex >= 0 && isNegatedArtifactMention(matchIndex)) {
       return matches;
     }
 

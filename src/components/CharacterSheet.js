@@ -39,6 +39,7 @@ const CharacterSheet = () => {
                 <img
                   src={referenceImageUrl}
                   alt={mainCharacter.name}
+                  data-testid="character-reference-image"
                   className="w-full h-auto"
                 />
               ) : (

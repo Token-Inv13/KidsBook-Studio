@@ -92,7 +92,9 @@ function ensureProductionCsp(indexHtmlPath) {
 
 function createWindow() {
   const isDev = !app.isPackaged;
+  const useLocalBuild = process.env.ELECTRON_USE_LOCAL_BUILD === '1';
   const isSmokeTest = process.env.KIDSBOOK_SMOKE_TEST === '1';
+  const disableDevTools = process.env.KIDSBOOK_E2E === '1' || process.env.ELECTRON_DISABLE_DEVTOOLS === '1';
 
   if (!isDev) {
     session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
@@ -123,10 +125,10 @@ function createWindow() {
       nodeIntegration: false,
       contextIsolation: true,
       preload: path.join(__dirname, 'preload.js'),
-      devTools: isDev
+      devTools: isDev && !disableDevTools
     },
     icon: path.join(__dirname, '../assets/icon.png'),
-    autoHideMenuBar: !isDev,
+    autoHideMenuBar: !(isDev && !useLocalBuild),
     show: false
   });
 
@@ -179,7 +181,7 @@ function createWindow() {
   Menu.setApplicationMenu(Menu.buildFromTemplate(menuTemplate));
 
   // Load the app
-  if (isDev) {
+  if (isDev && !useLocalBuild) {
     const startURL = process.env.ELECTRON_START_URL || 'http://localhost:3000';
     mainWindow.loadURL(startURL);
   } else {
@@ -226,7 +228,7 @@ function createWindow() {
     }
   });
 
-  if (isDev) {
+  if (isDev && !useLocalBuild && !disableDevTools) {
     mainWindow.webContents.openDevTools();
   } else if (mainWindow.webContents.isDevToolsOpened()) {
     mainWindow.webContents.closeDevTools();
@@ -321,6 +323,13 @@ ipcMain.handle('app:getProjectsPath', () => {
 
 ipcMain.handle('app:getUserDataPath', () => {
   return userDataPath;
+});
+
+ipcMain.handle('app:getRuntimeFlags', () => {
+  return {
+    isE2E: process.env.KIDSBOOK_E2E === '1',
+    useLocalBuild: process.env.ELECTRON_USE_LOCAL_BUILD === '1'
+  };
 });
 
 ipcMain.handle('dialog:selectFolder', async () => {

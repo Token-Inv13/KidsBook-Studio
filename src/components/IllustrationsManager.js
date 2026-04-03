@@ -423,6 +423,7 @@ function IllustrationsManager({ onOpenPage, onNavigateToCharacters }) {
               <button
                 onClick={handleGenerateAll}
                 disabled={stats.missing === 0 || !identitySpecStatus.ok}
+                data-testid="generate-all-illustrations"
                 className="inline-flex items-center gap-2 px-5 py-2.5 bg-rose-600 text-white rounded-xl hover:bg-rose-700 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Wand2 className="w-5 h-5" />
@@ -479,7 +480,7 @@ function IllustrationsManager({ onOpenPage, onNavigateToCharacters }) {
 
       {/* Error message */}
       {error && (
-        <div className="bg-red-50 border border-red-200 rounded-xl p-4 m-6 shadow-sm">
+        <div data-testid="illustrations-error" className="bg-red-50 border border-red-200 rounded-xl p-4 m-6 shadow-sm">
           <p className="text-red-700">{error}</p>
         </div>
       )}

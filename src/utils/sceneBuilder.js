@@ -14,6 +14,8 @@
  * @param {string} params.openaiServiceUrl - URL of OpenAI service
  * @returns {Promise<string>} Visual scene description (2-5 sentences)
  */
+const SCENE_BUILDER_TIMEOUT_MS = 60_000;
+
 export async function buildSceneDescription({
   pageText,
   bookSummary,
@@ -64,18 +66,32 @@ Génère une description de scène visuelle courte (2-5 phrases) pour cette page
 Concentre-toi sur l'action, le lieu, l'ambiance et la composition.`;
 
   try {
-    const response = await fetch(`${openaiServiceUrl}/api/chat`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt }
-        ]
-      })
-    });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), SCENE_BUILDER_TIMEOUT_MS);
+
+    let response;
+    try {
+      response = await fetch(`${openaiServiceUrl}/api/chat`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt }
+          ]
+        }),
+        signal: controller.signal
+      });
+    } catch (error) {
+      if (error?.name === 'AbortError') {
+        throw new Error(`Scene builder timed out after ${SCENE_BUILDER_TIMEOUT_MS}ms`);
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeoutId);
+    }
 
     if (!response.ok) {
       const error = await response.json();

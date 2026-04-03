@@ -55,7 +55,7 @@ const TopBar = ({ onOpenSettings }) => {
         {currentProject ? (
           <>
             <div>
-              <h2 className="text-lg font-semibold text-gray-800">{currentProject.title}</h2>
+              <h2 data-testid="current-project-title" className="text-lg font-semibold text-gray-800">{currentProject.title}</h2>
               <p className="text-sm text-gray-500">Par {currentProject.author}</p>
             </div>
             <div className="flex items-center gap-4 text-sm">
@@ -77,7 +77,7 @@ const TopBar = ({ onOpenSettings }) => {
 
       <div className="flex items-center gap-4">
         {kdpStatus && (
-          <div className={`flex items-center gap-2 px-4 py-2 rounded-lg ${kdpStatusClasses[kdpStatus.color].container}`}>
+          <div data-testid="kdp-status" className={`flex items-center gap-2 px-4 py-2 rounded-lg ${kdpStatusClasses[kdpStatus.color].container}`}>
             <kdpStatus.icon size={18} className={kdpStatusClasses[kdpStatus.color].icon} />
             <span className={`text-sm font-medium ${kdpStatusClasses[kdpStatus.color].text}`}>
               KDP: {kdpStatus.text}

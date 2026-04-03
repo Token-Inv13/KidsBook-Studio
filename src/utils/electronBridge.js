@@ -108,7 +108,8 @@ export const electronBridge = {
   get app() {
     return isElectron() && window.electron.app ? window.electron.app : {
       getProjectsPath: async () => './projects',
-      getUserDataPath: async () => './userdata'
+      getUserDataPath: async () => './userdata',
+      getRuntimeFlags: async () => ({ isE2E: false, useLocalBuild: false })
     };
   },
   get dialog() {

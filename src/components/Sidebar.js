@@ -30,6 +30,7 @@ const Sidebar = ({ currentView, onViewChange, compact = false, onToggleCompact }
 
         <button
           onClick={onToggleCompact}
+          data-testid="sidebar-toggle"
           className="w-8 h-8 rounded-md border border-indigo-400/40 bg-indigo-900/45 hover:bg-indigo-700/70 inline-flex items-center justify-center transition-colors"
           title={compact ? 'Déployer la sidebar' : 'Réduire la sidebar'}
         >
@@ -46,6 +47,7 @@ const Sidebar = ({ currentView, onViewChange, compact = false, onToggleCompact }
             <button
               key={item.id}
               onClick={() => onViewChange(item.id)}
+              data-testid={`nav-${item.id}`}
               title={compact ? item.label : undefined}
               className={`
                 w-full relative flex items-center ${compact ? 'justify-center' : 'gap-3'} ${compact ? 'px-2' : 'px-4'} py-3 rounded-xl mb-2

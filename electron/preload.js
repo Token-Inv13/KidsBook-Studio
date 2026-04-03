@@ -16,7 +16,8 @@ contextBridge.exposeInMainWorld('electron', {
   },
   app: {
     getProjectsPath: () => ipcRenderer.invoke('app:getProjectsPath'),
-    getUserDataPath: () => ipcRenderer.invoke('app:getUserDataPath')
+    getUserDataPath: () => ipcRenderer.invoke('app:getUserDataPath'),
+    getRuntimeFlags: () => ipcRenderer.invoke('app:getRuntimeFlags')
   },
   dialog: {
     selectFolder: () => ipcRenderer.invoke('dialog:selectFolder')

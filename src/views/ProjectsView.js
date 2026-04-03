@@ -91,6 +91,7 @@ const ProjectsView = () => {
               <div
                 key={project.id}
                 onClick={() => handleOpenProject(project.id)}
+                data-testid={`project-card-${project.id}`}
                 className="bg-white rounded-2xl shadow-sm hover:shadow-lg transition-all duration-200 cursor-pointer overflow-hidden border border-zinc-200 hover:border-indigo-300 hover:-translate-y-0.5"
               >
                 <div className="h-40 bg-gradient-to-br from-indigo-500 via-violet-500 to-fuchsia-500 flex items-center justify-center">

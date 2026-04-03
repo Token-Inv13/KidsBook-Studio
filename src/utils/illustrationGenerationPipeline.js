@@ -18,11 +18,44 @@ import {
 import { buildIllustrationConstraintBundle, summarizeConstraintBundle } from './illustrationConstraintBundle';
 import { evaluateIllustrationCandidate } from './illustrationEvaluation';
 import { prepareGeneratorRequest, selectGeneratorStrategy } from './illustrationGeneratorStrategies';
+import { electronBridge } from './electronBridge';
 
 const PAGE_MIN_TEXT_LENGTH = 10;
 const SAFETY_RETRY_DELAY_MS = 1500;
+const IMAGE_REQUEST_TIMEOUT_MS = 150_000;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const getRuntimePipelineConfig = async () => {
+  try {
+    const flags = await electronBridge.app.getRuntimeFlags();
+    if (flags?.isE2E) {
+      return {
+        isE2E: true,
+        maxConsistencyAttempts: 1,
+        maxBatchRetries: 0,
+        pass1BatchCandidateCount: 1,
+        pass2BatchCandidateCount: 1,
+        pass2PageCandidateCount: 1,
+        variantCount: 1,
+        forcedImageSize: '1024x1024'
+      };
+    }
+  } catch (error) {
+    console.warn('[illustrationPipeline] Unable to read runtime flags:', error?.message || error);
+  }
+
+  return {
+    isE2E: false,
+    maxConsistencyAttempts: AUTO_BEST_RESULT_MAX_CONSISTENCY_ATTEMPTS,
+    maxBatchRetries: AUTO_BEST_RESULT_MAX_BATCH_RETRIES,
+    pass1BatchCandidateCount: AUTO_BEST_RESULT_PASS1_BATCH_CANDIDATE_COUNT,
+    pass2BatchCandidateCount: AUTO_BEST_RESULT_PASS2_BATCH_CANDIDATE_COUNT,
+    pass2PageCandidateCount: AUTO_BEST_RESULT_PASS2_PAGE_CANDIDATE_COUNT,
+    variantCount: AUTO_BEST_RESULT_VARIANT_COUNT,
+    forcedImageSize: null
+  };
+};
 
 const getPageText = (page) => {
   if (!page?.textBlocks || !Array.isArray(page.textBlocks)) {
@@ -45,18 +78,35 @@ const getPageText = (page) => {
 const createImageRequester = ({ openaiServiceUrl, constraintBundle, dalleParams }) => {
   return async ({ prompt, strategyMetadata }) => {
     const reference = constraintBundle?.reference || {};
-    const response = await fetch(`${openaiServiceUrl}/api/generate-image`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        prompt,
-        size: dalleParams.size,
-        quality: 'standard',
-        referenceImageId: reference.imageId || 'main-character-reference',
-        referenceImagePath: reference.imagePath || null,
-        generatorMode: strategyMetadata?.mode || 'text-only'
-      })
-    });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), IMAGE_REQUEST_TIMEOUT_MS);
+
+    let response;
+    try {
+      response = await fetch(`${openaiServiceUrl}/api/generate-image`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt,
+          size: dalleParams.size,
+          quality: 'standard',
+          referenceImageId: reference.imageId || 'main-character-reference',
+          referenceImagePath: reference.imagePath || null,
+          generatorMode: strategyMetadata?.mode || 'text-only'
+        }),
+        signal: controller.signal
+      });
+    } catch (error) {
+      if (error?.name === 'AbortError') {
+        const timeoutError = new Error(`Image generation request timed out after ${IMAGE_REQUEST_TIMEOUT_MS}ms`);
+        timeoutError.transient = true;
+        timeoutError.statusCode = 504;
+        throw timeoutError;
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeoutId);
+    }
 
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
@@ -298,7 +348,8 @@ const runPass = async ({
   minAcceptanceScore,
   constraintBundle,
   requestGeneratedImage,
-  dalleParams
+  dalleParams,
+  maxConsistencyAttempts
 }) => {
   const variants = [];
   const attempts = [];
@@ -313,7 +364,7 @@ const runPass = async ({
         constraintBundle,
         requestGeneratedImage,
         dalleParams,
-        maxConsistencyAttempts: AUTO_BEST_RESULT_MAX_CONSISTENCY_ATTEMPTS
+        maxConsistencyAttempts
       });
 
       variants.push(result.bestVariant);
@@ -356,6 +407,7 @@ export async function generateIllustrationWithAutoPipeline({
   openaiServiceUrl,
   mode = 'page'
 }) {
+  const runtimeConfig = await getRuntimePipelineConfig();
   const pageText = getPageText(page);
   const sceneDescription = await buildSceneDescription({
     pageText,
@@ -371,7 +423,11 @@ export async function generateIllustrationWithAutoPipeline({
     pageText,
     sceneDescription
   });
-  const dalleParams = getRecommendedDalleParams(page, currentProject.bookFormat || currentProject.format || '8x10');
+  const recommendedDalleParams = getRecommendedDalleParams(page, currentProject.bookFormat || currentProject.format || '8x10');
+  const dalleParams = {
+    ...recommendedDalleParams,
+    size: runtimeConfig.forcedImageSize || recommendedDalleParams.size
+  };
   const requestGeneratedImage = createImageRequester({
     openaiServiceUrl,
     constraintBundle: preliminaryBundle,
@@ -379,18 +435,18 @@ export async function generateIllustrationWithAutoPipeline({
   });
 
   const candidateCount = mode === 'batch'
-    ? AUTO_BEST_RESULT_PASS1_BATCH_CANDIDATE_COUNT
-    : AUTO_BEST_RESULT_VARIANT_COUNT;
+    ? runtimeConfig.pass1BatchCandidateCount
+    : runtimeConfig.variantCount;
   const pass2CandidateCount = mode === 'batch'
-    ? AUTO_BEST_RESULT_PASS2_BATCH_CANDIDATE_COUNT
-    : AUTO_BEST_RESULT_PASS2_PAGE_CANDIDATE_COUNT;
+    ? runtimeConfig.pass2BatchCandidateCount
+    : runtimeConfig.pass2PageCandidateCount;
 
   let finalConstraintBundle = preliminaryBundle;
   const passResults = [];
   let lastError = null;
   let bestFallbackCandidate = null;
 
-  for (let batchAttempt = 0; batchAttempt <= AUTO_BEST_RESULT_MAX_BATCH_RETRIES; batchAttempt += 1) {
+  for (let batchAttempt = 0; batchAttempt <= runtimeConfig.maxBatchRetries; batchAttempt += 1) {
     finalConstraintBundle = buildIllustrationConstraintBundle({
       currentProject,
       page,
@@ -404,7 +460,8 @@ export async function generateIllustrationWithAutoPipeline({
       minAcceptanceScore: AUTO_BEST_RESULT_PASS1_ACCEPTANCE_SCORE,
       constraintBundle: finalConstraintBundle,
       requestGeneratedImage,
-      dalleParams
+      dalleParams,
+      maxConsistencyAttempts: runtimeConfig.maxConsistencyAttempts
     });
     passResults.push(pass1);
 
@@ -445,7 +502,8 @@ export async function generateIllustrationWithAutoPipeline({
       minAcceptanceScore: AUTO_BEST_RESULT_PASS2_ACCEPTANCE_SCORE,
       constraintBundle: finalConstraintBundle,
       requestGeneratedImage,
-      dalleParams
+      dalleParams,
+      maxConsistencyAttempts: runtimeConfig.maxConsistencyAttempts
     });
     passResults.push(pass2);
 
@@ -474,7 +532,7 @@ export async function generateIllustrationWithAutoPipeline({
         allVariants: variants
       };
 
-      if (pass2.accepted || batchAttempt >= AUTO_BEST_RESULT_MAX_BATCH_RETRIES) {
+      if (pass2.accepted || batchAttempt >= runtimeConfig.maxBatchRetries) {
         if (!pass2.accepted) {
           const fallbackReason = pass2.variants.length === 0 && pass1.variants.length > 0
             ? 'safe mode produced no strictly acceptable candidate; reusing least bad pass-1 candidate'
@@ -529,7 +587,7 @@ export async function generateIllustrationWithAutoPipeline({
       }
     }
 
-    if (batchAttempt >= AUTO_BEST_RESULT_MAX_BATCH_RETRIES && bestFallbackCandidate?.variant) {
+    if (batchAttempt >= runtimeConfig.maxBatchRetries && bestFallbackCandidate?.variant) {
       const fallbackReason = bestFallbackCandidate.variant.safeMode
         ? 'safe mode fallback accepted'
         : 'all candidates rejected -> fallback triggered';
