@@ -74,6 +74,15 @@ describe('projectSchema', () => {
               version: '2.0',
               referenceImageId: 'main-character-reference'
             },
+            generationTrace: {
+              providerUsed: 'ideogram',
+              characterReferenceUsed: true,
+              styleReferenceUsed: true,
+              remixUsed: true,
+              fallbackOpenAIUsed: false,
+              scoreFinal: 0.91,
+              decision: 'accepted'
+            },
             identityHash: 'abcd1234'
           }
         }
@@ -90,6 +99,7 @@ describe('projectSchema', () => {
     expect(migrated.images[0].evaluation?.evaluationVersion).toBe('2.0');
     expect(migrated.images[0].generatorStrategy?.mode).toBe('guided');
     expect(migrated.images[0].constraintBundleSummary?.referenceImageId).toBe('main-character-reference');
+    expect(migrated.images[0].generationTrace?.providerUsed).toBe('ideogram');
     expect(migrated.images[0].identityHash).toBe('abcd1234');
   });
 

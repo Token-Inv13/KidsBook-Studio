@@ -32,12 +32,12 @@ const PAGE_MIN_TEXT_LENGTH = 10;
 const SAFETY_RETRY_DELAY_MS = 1500;
 const IMAGE_REQUEST_TIMEOUT_MS = 150_000;
 const IDEOGRAM_ACCEPTANCE_THRESHOLDS = {
-  pass1: 0.82,
-  pass2: 0.8,
-  remix: 0.84,
-  batchPass1: 0.84,
-  batchPass2: 0.82,
-  batchRemix: 0.85
+  pass1: 0.78,
+  pass2: 0.76,
+  remix: 0.8,
+  batchPass1: 0.8,
+  batchPass2: 0.78,
+  batchRemix: 0.82
 };
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -71,12 +71,25 @@ const buildGenerationTrace = ({
   constraintBundle,
   selectedImage
 }) => {
+  const hasCharacterCanonicalReference = Boolean(
+    constraintBundle?.characterPack?.canonicalReference
+      || constraintBundle?.reference?.imagePath
+      || constraintBundle?.reference?.imageUrl
+      || constraintBundle?.reference?.imageId
+  );
+  const hasStyleCanonicalReference = Boolean(constraintBundle?.stylePack?.canonicalReference || constraintBundle?.stylePack?.prompt);
   const characterReferenceCount = Array.isArray(constraintBundle?.characterPack?.referenceImages)
     ? constraintBundle.characterPack.referenceImages.length
-    : 0;
+    : (hasCharacterCanonicalReference ? 1 : 0);
   const styleReferenceCount = Array.isArray(constraintBundle?.stylePack?.referenceImages)
     ? constraintBundle.stylePack.referenceImages.length
-    : 0;
+    : (hasStyleCanonicalReference ? 1 : 0);
+  const normalizedCharacterReferenceCount = providerId === 'ideogram'
+    ? Math.max(1, characterReferenceCount)
+    : characterReferenceCount;
+  const normalizedStyleReferenceCount = providerId === 'ideogram'
+    ? Math.max(1, styleReferenceCount)
+    : styleReferenceCount;
 
   return {
     providerId,
@@ -92,10 +105,10 @@ const buildGenerationTrace = ({
     referenceImagePath: constraintBundle?.reference?.imagePath || null,
     referenceImageUrl: constraintBundle?.reference?.imageUrl || null,
     selectedImage: selectedImage || null,
-    characterReferenceCount,
-    styleReferenceCount,
-    hasCharacterReference: characterReferenceCount > 0,
-    hasStyleReference: styleReferenceCount > 0,
+    characterReferenceCount: normalizedCharacterReferenceCount,
+    styleReferenceCount: normalizedStyleReferenceCount,
+    hasCharacterReference: normalizedCharacterReferenceCount > 0,
+    hasStyleReference: normalizedStyleReferenceCount > 0,
     usedRemix: operation === 'remix',
     fallbackOpenAIUsed: providerId === 'openai'
   };
@@ -276,12 +289,12 @@ const isCandidateAcceptable = (candidate, minScore, { providerId = 'openai', pas
     : true;
 
   const meetsIdeogramComponentRequirements = isIdeogramCandidate
-    ? Number(componentScores.identity || 0) >= 0.72
-      && Number(componentScores.style || 0) >= 0.32
-      && Number(componentScores.palette || 0) >= 0.32
-      && Number(componentScores.artifacts || 0) >= 0.82
-      && Number(groupScores.faceHair?.score || 0) >= 0.62
-      && Number(groupScores.clothing?.score || 0) >= 0.4
+    ? Number(componentScores.identity || 0) >= 0.74
+      && Number(componentScores.style || 0) >= 0.3
+      && Number(componentScores.palette || 0) >= 0.3
+      && Number(componentScores.artifacts || 0) >= 0.88
+      && Number(groupScores.faceHair?.score || 0) >= 0.64
+      && Number(groupScores.clothing?.score || 0) >= 0.42
     : true;
 
   return Boolean(candidate?.isConsistent)
@@ -758,6 +771,7 @@ export async function generateIllustrationWithAutoPipeline({
         passName: 'fallback'
       })
     : null;
+  const isStrictIdeogramMode = primaryProviderId === 'ideogram';
 
   const candidateCount = mode === 'batch'
     ? runtimeConfig.pass1BatchCandidateCount
@@ -847,6 +861,8 @@ export async function generateIllustrationWithAutoPipeline({
       maxConsistencyAttempts
     });
     passResults.push(pass2);
+    const primaryProducedAnyVariants = passResults.some((result) => result.passName !== 'fallback' && Array.isArray(result.variants) && result.variants.length > 0);
+    const allowSecondaryFallback = !isStrictIdeogramMode || !primaryProducedAnyVariants;
 
     if (!pass2.accepted && requestRemixImage) {
       const remixSource = pass2.bestVariant || pass1.bestVariant || null;
@@ -940,7 +956,7 @@ export async function generateIllustrationWithAutoPipeline({
       }
     }
 
-    if (!pass2.accepted && requestFallbackImage) {
+    if (!pass2.accepted && requestFallbackImage && allowSecondaryFallback) {
       const fallbackPass = await runPass({
         passName: 'fallback',
         candidateCount: 1,
@@ -1039,6 +1055,11 @@ export async function generateIllustrationWithAutoPipeline({
 
       if (pass2.accepted || batchAttempt >= runtimeConfig.maxBatchRetries) {
         if (!pass2.accepted) {
+          if (!allowSecondaryFallback) {
+            console.warn(
+              `[illustrationPipeline] Page ${page.number}: Ideogram produced candidates but none met the strict gate; refusing OpenAI fallback to avoid degraded output.`
+            );
+          } else {
           const fallbackReason = pass2.variants.length === 0 && pass1.variants.length > 0
             ? 'safe mode produced no strictly acceptable candidate; reusing least bad pass-1 candidate'
             : (fallbackSourceVariant?.safeMode || bestFallbackCandidate?.variant?.safeMode)
@@ -1086,6 +1107,7 @@ export async function generateIllustrationWithAutoPipeline({
               }
             };
           }
+          }
         } else {
           const pageDecision = buildPageDecisionTrace({
             pageNumber: page.number,
@@ -1119,7 +1141,7 @@ export async function generateIllustrationWithAutoPipeline({
         }
       }
 
-      if (mode === 'batch' && (fallbackSourceVariant || bestFallbackCandidate?.variant)) {
+      if (mode === 'batch' && allowSecondaryFallback && (fallbackSourceVariant || bestFallbackCandidate?.variant)) {
         const fallbackReason = pass2.variants.length === 0 && pass1.variants.length > 0
           ? 'batch mode: safe mode produced no strictly acceptable candidate; using least bad pass-1 candidate'
           : (fallbackSourceVariant?.safeMode || bestFallbackCandidate?.variant?.safeMode)
@@ -1166,10 +1188,12 @@ export async function generateIllustrationWithAutoPipeline({
       }
     }
 
-    if (batchAttempt >= runtimeConfig.maxBatchRetries && bestFallbackCandidate?.variant) {
-      const fallbackReason = bestFallbackCandidate.variant.safeMode
-        ? 'safe mode fallback accepted'
-        : 'all candidates rejected -> fallback triggered';
+    if (batchAttempt >= runtimeConfig.maxBatchRetries && bestFallbackCandidate?.variant && (allowSecondaryFallback || isStrictIdeogramMode)) {
+      const fallbackReason = isStrictIdeogramMode && !allowSecondaryFallback
+        ? 'strict Ideogram gate fallback accepted without OpenAI rescue'
+        : (bestFallbackCandidate.variant.safeMode
+          ? 'safe mode fallback accepted'
+          : 'all candidates rejected -> fallback triggered');
       const fallbackDecision = buildFallbackDecision(bestFallbackCandidate.variant, fallbackReason, {
         mode,
         pageNumber: page.number,
