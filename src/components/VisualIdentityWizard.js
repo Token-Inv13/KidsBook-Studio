@@ -4,7 +4,7 @@ import { X, Palette, Sparkles, Loader, Check } from 'lucide-react';
 import { buildVisualIdentitySpec, validateVisualIdentitySpec } from '../utils/visualIdentitySpec';
 
 const VisualIdentityWizard = ({ onClose }) => {
-  const { currentProject, updateProject, openaiServiceUrl } = useApp();
+  const { currentProject, updateProject, openaiServiceUrl, ideogramServiceUrl, falServiceUrl } = useApp();
   const [step, setStep] = useState(1);
   const [artisticStyle, setArtisticStyle] = useState('');
   const [generatingVariants, setGeneratingVariants] = useState(false);
@@ -86,8 +86,9 @@ Mood: friendly, approachable, expressive
       `.trim();
 
       const generatedVariants = [];
-      if (!openaiServiceUrl) {
-        throw new Error('Service OpenAI indisponible');
+      const imageServiceUrl = falServiceUrl || ideogramServiceUrl || openaiServiceUrl;
+      if (!imageServiceUrl) {
+        throw new Error('Aucun service d\'image n\'est disponible');
       }
 
       // Generate 4 variants
@@ -95,7 +96,7 @@ Mood: friendly, approachable, expressive
         setProgress(`Génération de la variante ${i + 1}/4...`);
         
         try {
-          const response = await fetch(`${openaiServiceUrl}/api/generate-image`, {
+          const response = await fetch(`${imageServiceUrl}/api/generate-image`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -209,6 +210,28 @@ Mood: friendly, approachable, expressive
         throw new Error('Style artistique non trouvé');
       }
 
+      const referenceImages = [
+        {
+          imageId: 'main-character-reference',
+          url: selectedVariant.url,
+          path: imagePath || null,
+          base64: referenceImageBase64 || null,
+          mimeType: referenceImageMimeType,
+          filename: 'main-character-reference.png'
+        },
+        ...variants
+          .filter((variant) => variant?.url && variant.url !== selectedVariant.url)
+          .slice(0, 4)
+          .map((variant, index) => ({
+            imageId: `main-character-reference-${index + 2}`,
+            url: variant.url,
+            path: null,
+            base64: null,
+            mimeType: referenceImageMimeType,
+            filename: `main-character-reference-${index + 2}.png`
+          }))
+      ];
+
       const mainCharacterData = {
         ...mainCharacter,
         referenceImage: localImagePath,
@@ -216,7 +239,8 @@ Mood: friendly, approachable, expressive
         referenceImageMimeType,
         referenceImageId: 'main-character-reference',
         referencePrompt: selectedVariant.prompt,
-        colorPalette: colorPalette
+        colorPalette: colorPalette,
+        referenceImages
       };
       
       // Only add referenceImagePath if we successfully downloaded the image
@@ -252,7 +276,8 @@ Mood: friendly, approachable, expressive
         referenceImageBase64,
         referenceImageMimeType,
         referenceImageId: 'main-character-reference',
-        colorPalette
+        colorPalette,
+        referenceImages
       };
       
       if (imagePath) {

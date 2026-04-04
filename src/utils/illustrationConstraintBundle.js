@@ -52,7 +52,8 @@ export const buildIllustrationConstraintBundle = ({
   currentProject,
   page,
   pageText,
-  sceneDescription
+  sceneDescription,
+  sceneSpec = null
 }) => {
   const specValidation = validateVisualIdentitySpec(currentProject?.visualIdentitySpec);
   if (!specValidation.ok) {
@@ -64,13 +65,17 @@ export const buildIllustrationConstraintBundle = ({
   const identityHash = stableHash(spec);
   const continuity = getContinuityContext(currentProject?.pages || [], page);
   const referenceDerivedDescriptor = buildReferenceDerivedDescriptor(mainCharacter);
+  const generationPolicy = spec?.generationPolicy || spec?.promptProfile?.generationPolicy || null;
 
   return {
-    version: '2.0',
+    version: '2.1',
     identityHash,
     spec,
+    generationPolicy,
     characterPack: spec?.characterPack || null,
     stylePack: spec?.stylePack || null,
+    trainingArtifacts: spec?.trainingArtifacts || null,
+    sceneSpec: sceneSpec || null,
     page: {
       id: page?.id || null,
       number: page?.number || null,
@@ -107,7 +112,7 @@ export const buildIllustrationConstraintBundle = ({
 };
 
 export const summarizeConstraintBundle = (bundle) => ({
-  version: bundle?.version || '2.0',
+  version: bundle?.version || '2.1',
   identityHash: bundle?.identityHash || null,
   pageNumber: bundle?.page?.number || null,
   template: bundle?.page?.template || null,
@@ -115,9 +120,14 @@ export const summarizeConstraintBundle = (bundle) => ({
   hasReferenceImage: Boolean(bundle?.reference?.hasReferenceImage),
   referenceDerivedDescriptor: bundle?.reference?.derivedDescriptor || '',
   characterPackId: bundle?.characterPack?.id || null,
+  characterReferenceCount: Number(bundle?.characterPack?.referenceImageCount || 0),
+  multiReferenceReady: Boolean(bundle?.characterPack?.multiReferenceReady),
+  trainingArtifacts: bundle?.trainingArtifacts || null,
   stylePackId: bundle?.stylePack?.id || null,
   invariantCount: Array.isArray(bundle?.invariants) ? bundle.invariants.length : 0,
   palette: Array.isArray(bundle?.palette) ? bundle.palette : [],
   continuityFromPage: bundle?.continuity?.previousPageNumber || null,
+  sceneSpec: bundle?.sceneSpec || null,
+  generationPolicy: bundle?.generationPolicy || null,
   futureVisualScoring: bundle?.futureVisualScoring || null
 });

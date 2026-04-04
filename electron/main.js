@@ -5,6 +5,7 @@ const { pathToFileURL } = require('url');
 const Store = require('electron-store');
 const { startOpenAIService, stopOpenAIService } = require('./openai-service');
 const { startIdeogramService, stopIdeogramService } = require('./ideogram-service');
+const { startFalService, stopFalService } = require('./fal-service');
 const { deleteSecret, getSecret, setSecret } = require('./credential-store');
 
 const SAFE_FILE_SCHEME = 'safe-file';
@@ -43,7 +44,9 @@ function getSafeAppDataPath() {
 }
 
 const legacyDataPath = path.join(getSafeDocumentsPath(), 'KidsBookStudio');
-const runtimeUserDataPath = path.join(getSafeAppDataPath(), 'KidsBookStudio');
+const runtimeUserDataPath = process.env.KIDSBOOK_USER_DATA_PATH
+  ? path.resolve(process.env.KIDSBOOK_USER_DATA_PATH)
+  : path.join(getSafeAppDataPath(), 'KidsBookStudio');
 
 for (const targetPath of [legacyDataPath, runtimeUserDataPath]) {
   if (!fs.existsSync(targetPath)) {
@@ -65,6 +68,7 @@ const store = new Store({ cwd: legacyDataPath });
 let mainWindow;
 let openaiServicePort;
 let ideogramServicePort;
+let falServicePort;
 
 const PRODUCTION_CSP = [
   "default-src 'self'",
@@ -319,6 +323,13 @@ app.whenReady().then(async () => {
     console.error('Failed to start Ideogram service:', error);
   }
 
+  try {
+    falServicePort = await startFalService();
+    console.log(`fal.ai service started on port ${falServicePort}`);
+  } catch (error) {
+    console.error('Failed to start fal.ai service:', error);
+  }
+
   registerSafeFileProtocol();
 
   createWindow();
@@ -339,6 +350,7 @@ app.on('window-all-closed', () => {
 app.on('before-quit', async () => {
   await stopOpenAIService();
   await stopIdeogramService();
+  await stopFalService();
 });
 
 ipcMain.handle('store:get', (event, key) => {
@@ -418,12 +430,46 @@ ipcMain.handle('ideogramKey:delete', async () => {
   }
 });
 
+ipcMain.handle('falKey:set', async (event, apiKey) => {
+  try {
+    await setSecret('fal', apiKey);
+    return { success: true };
+  } catch (error) {
+    console.error('Failed to store fal.ai API key:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('falKey:get', async () => {
+  try {
+    const apiKey = await getSecret('fal');
+    return { success: true, hasApiKey: Boolean(apiKey) };
+  } catch (error) {
+    console.error('Failed to retrieve fal.ai API key:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('falKey:delete', async () => {
+  try {
+    await deleteSecret('fal');
+    return { success: true };
+  } catch (error) {
+    console.error('Failed to delete fal.ai API key:', error);
+    return { success: false, error: error.message };
+  }
+});
+
 ipcMain.handle('openai:port', () => {
   return openaiServicePort;
 });
 
 ipcMain.handle('ideogram:port', () => {
   return ideogramServicePort;
+});
+
+ipcMain.handle('fal:port', () => {
+  return falServicePort;
 });
 
 ipcMain.handle('app:getProjectsPath', () => {

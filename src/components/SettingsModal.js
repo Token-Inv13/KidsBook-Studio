@@ -7,10 +7,13 @@ const SECRET_PLACEHOLDER = '*'.repeat(32);
 const SettingsModal = ({ onClose }) => {
   const [openaiKey, setOpenaiKey] = useState('');
   const [ideogramKey, setIdeogramKey] = useState('');
+  const [falKey, setFalKey] = useState('');
   const [showOpenAIKey, setShowOpenAIKey] = useState(false);
   const [showIdeogramKey, setShowIdeogramKey] = useState(false);
+  const [showFalKey, setShowFalKey] = useState(false);
   const [hasOpenAIKey, setHasOpenAIKey] = useState(false);
   const [hasIdeogramKey, setHasIdeogramKey] = useState(false);
+  const [hasFalKey, setHasFalKey] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState(null);
 
@@ -20,9 +23,10 @@ const SettingsModal = ({ onClose }) => {
 
   const checkExistingKeys = async () => {
     try {
-      const [openaiResult, ideogramResult] = await Promise.all([
+      const [openaiResult, ideogramResult, falResult] = await Promise.all([
         electronBridge.apiKey.get(),
-        electronBridge.ideogramApiKey.get()
+        electronBridge.ideogramApiKey.get(),
+        electronBridge.falApiKey.get()
       ]);
 
       if (openaiResult?.success && openaiResult.hasApiKey) {
@@ -33,6 +37,11 @@ const SettingsModal = ({ onClose }) => {
       if (ideogramResult?.success && ideogramResult.hasApiKey) {
         setHasIdeogramKey(true);
         setIdeogramKey(SECRET_PLACEHOLDER);
+      }
+
+      if (falResult?.success && falResult.hasApiKey) {
+        setHasFalKey(true);
+        setFalKey(SECRET_PLACEHOLDER);
       }
     } catch (error) {
       console.error('Error checking API keys:', error);
@@ -60,8 +69,9 @@ const SettingsModal = ({ onClose }) => {
   const handleSave = async () => {
     const openaiValue = isPlaceholder(openaiKey) ? null : openaiKey.trim();
     const ideogramValue = isPlaceholder(ideogramKey) ? null : ideogramKey.trim();
+    const falValue = isPlaceholder(falKey) ? null : falKey.trim();
 
-    if (!openaiValue && !ideogramValue) {
+    if (!openaiValue && !ideogramValue && !falValue) {
       setMessage({ type: 'error', text: 'Enter at least one API key' });
       return;
     }
@@ -90,6 +100,16 @@ const SettingsModal = ({ onClose }) => {
         setIdeogramKey(SECRET_PLACEHOLDER);
       }
 
+      if (falValue) {
+        const result = await electronBridge.falApiKey.set(falValue);
+        if (!result.success) {
+          throw new Error(result.error || 'fal.ai key save failed');
+        }
+        await reinitializeService(electronBridge.fal, 'fal.ai');
+        setHasFalKey(true);
+        setFalKey(SECRET_PLACEHOLDER);
+      }
+
       setMessage({ type: 'success', text: 'API keys saved successfully' });
       setTimeout(() => onClose(), 1200);
     } catch (error) {
@@ -115,6 +135,15 @@ const SettingsModal = ({ onClose }) => {
       setIdeogramKey('');
       setHasIdeogramKey(false);
       setMessage({ type: 'success', text: 'Ideogram key deleted' });
+    }
+  };
+
+  const handleDeleteFal = async () => {
+    if (window.confirm('Delete the fal.ai API key?')) {
+      await electronBridge.falApiKey.delete();
+      setFalKey('');
+      setHasFalKey(false);
+      setMessage({ type: 'success', text: 'fal.ai key deleted' });
     }
   };
 
@@ -186,7 +215,8 @@ const SettingsModal = ({ onClose }) => {
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
               <p className="text-sm text-blue-800">
                 Keys are stored securely in the system keychain and are never exposed in React.
-                OpenAI powers story and fallback tasks. Ideogram powers the main illustration pipeline.
+                OpenAI powers story and scene tasks. fal.ai powers the main illustration and LoRA training pipeline.
+                Ideogram remains available as a secondary image provider.
               </p>
             </div>
 
@@ -213,6 +243,18 @@ const SettingsModal = ({ onClose }) => {
                 helpText: 'Get your key from the Ideogram API dashboard.',
                 deleteAction: handleDeleteIdeogram,
                 hasKey: hasIdeogramKey
+              })}
+
+              {renderSecretField({
+                label: 'fal.ai API key',
+                value: falKey,
+                onChange: setFalKey,
+                showValue: showFalKey,
+                onToggleShow: () => setShowFalKey(!showFalKey),
+                placeholder: 'FAL_KEY...',
+                helpText: 'Get your key from the fal.ai dashboard.',
+                deleteAction: handleDeleteFal,
+                hasKey: hasFalKey
               })}
 
               {message && (

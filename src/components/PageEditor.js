@@ -8,7 +8,7 @@ import { finalizePageIllustrationSelection } from '../utils/illustrationPersiste
 import { generateIllustrationWithAutoPipeline } from '../utils/illustrationGenerationPipeline';
 
 const PageEditor = ({ pageId }) => {
-  const { currentProject, updateProject, openaiServiceUrl, ideogramServiceUrl } = useApp();
+  const { currentProject, updateProject, openaiServiceUrl, ideogramServiceUrl, falServiceUrl } = useApp();
   const [showGuides, setShowGuides] = useState(true);
   const [selectedBlock, setSelectedBlock] = useState(null);
   const [isGeneratingScene, setIsGeneratingScene] = useState(false);
@@ -163,6 +163,7 @@ const PageEditor = ({ pageId }) => {
         currentProject,
         page,
         openaiServiceUrl,
+        falServiceUrl,
         ideogramServiceUrl,
         mode: 'page'
       });

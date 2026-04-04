@@ -53,6 +53,21 @@ const mockIdeogramApiKey = {
   }
 };
 
+const mockFalApiKey = {
+  get: async () => {
+    const key = localStorage.getItem('mock-fal-api-key');
+    return { success: true, hasApiKey: Boolean(key) };
+  },
+  set: async (apiKey) => {
+    localStorage.setItem('mock-fal-api-key', apiKey);
+    return { success: true };
+  },
+  delete: async () => {
+    localStorage.removeItem('mock-fal-api-key');
+    return { success: true };
+  }
+};
+
 const mockOpenAI = {
   getPort: async () => {
     return 3001; // Default port
@@ -62,6 +77,12 @@ const mockOpenAI = {
 const mockIdeogram = {
   getPort: async () => {
     return 3002; // Default port
+  }
+};
+
+const mockFal = {
+  getPort: async () => {
+    return 3003; // Default port
   }
 };
 
@@ -126,11 +147,17 @@ export const electronBridge = {
   get ideogramApiKey() {
     return isElectron() ? window.electron.ideogramApiKey : mockIdeogramApiKey;
   },
+  get falApiKey() {
+    return isElectron() ? window.electron.falApiKey : mockFalApiKey;
+  },
   get openai() {
     return isElectron() ? window.electron.openai : mockOpenAI;
   },
   get ideogram() {
     return isElectron() ? window.electron.ideogram : mockIdeogram;
+  },
+  get fal() {
+    return isElectron() ? window.electron.fal : mockFal;
   },
   get app() {
     return isElectron() && window.electron.app ? window.electron.app : {

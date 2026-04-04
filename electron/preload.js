@@ -16,11 +16,19 @@ contextBridge.exposeInMainWorld('electron', {
     get: () => ipcRenderer.invoke('ideogramKey:get'),
     delete: () => ipcRenderer.invoke('ideogramKey:delete')
   },
+  falApiKey: {
+    set: (apiKey) => ipcRenderer.invoke('falKey:set', apiKey),
+    get: () => ipcRenderer.invoke('falKey:get'),
+    delete: () => ipcRenderer.invoke('falKey:delete')
+  },
   openai: {
     getPort: () => ipcRenderer.invoke('openai:port')
   },
   ideogram: {
     getPort: () => ipcRenderer.invoke('ideogram:port')
+  },
+  fal: {
+    getPort: () => ipcRenderer.invoke('fal:port')
   },
   app: {
     getProjectsPath: () => ipcRenderer.invoke('app:getProjectsPath'),

@@ -48,12 +48,14 @@ describe('illustrationPromptBuilder', () => {
     expect(result.prompt).toContain('STYLE LOCK');
     expect(result.prompt).toContain('PALETTE LOCK');
     expect(result.prompt).toContain('FRAGILE CASE LOCK');
+    expect(result.prompt).toContain('PRODUCTION POLICY');
     expect(result.prompt).toContain('SCENE DIRECTION');
     expect(result.prompt).toContain('PAGE NARRATIVE');
     expect(result.prompt).toContain('FINAL ILLUSTRATION RULE');
     expect(result.prompt).toContain('The image must look like a final children\'s book illustration, not a concept sheet or design board.');
     expect(result.prompt).toContain('GLOBAL NEGATIVE CONSTRAINTS');
-    expect(result.prompt.indexOf('VISUAL IDENTITY LOCK')).toBeLessThan(result.prompt.indexOf('SCENE DIRECTION'));
+    expect(result.prompt.indexOf('VISUAL IDENTITY LOCK')).toBeLessThan(result.prompt.indexOf('PRODUCTION POLICY'));
+    expect(result.prompt.indexOf('PRODUCTION POLICY')).toBeLessThan(result.prompt.indexOf('SCENE DIRECTION'));
     expect(result.prompt).not.toContain('no nudity');
     expect(result.prompt).not.toContain('fully clothed characters');
     expect(result.negativePrompt).toContain('different face');

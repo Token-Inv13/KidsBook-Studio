@@ -1,7 +1,8 @@
 import { stableHash } from './hash';
 
-const SPEC_VERSION = '2.0';
-const PACK_VERSION = '1.0';
+const SPEC_VERSION = '2.1';
+const PACK_VERSION = '1.1';
+const MAX_REFERENCE_IMAGES = 5;
 
 const toCleanString = (value) => {
   if (typeof value !== 'string') {
@@ -21,6 +22,71 @@ const normalizePalette = (palette) => {
     .filter(Boolean);
 
   return [...new Set(cleaned)].slice(0, 8);
+};
+
+const normalizeReferenceImage = (image = {}) => {
+  if (typeof image === 'string') {
+    const url = toCleanString(image);
+    if (!url) {
+      return null;
+    }
+
+    return {
+      imageId: null,
+      url,
+      path: null,
+      base64: null,
+      mimeType: 'image/png',
+      filename: null
+    };
+  }
+
+  const url = toCleanString(image.url || image.referenceImage || image.imageUrl);
+  const path = toCleanString(image.path || image.referenceImagePath || image.imageLocalPath);
+  const base64 = toCleanString(image.base64 || image.referenceImageBase64);
+  const mimeType = toCleanString(image.mimeType || image.referenceImageMimeType || 'image/png') || 'image/png';
+  const imageId = toCleanString(image.imageId || image.referenceImageId);
+  const filename = toCleanString(image.filename);
+
+  if (!url && !path && !base64) {
+    return null;
+  }
+
+  return {
+    imageId: imageId || null,
+    url: url || null,
+    path: path || null,
+    base64: base64 || null,
+    mimeType,
+    filename: filename || null
+  };
+};
+
+const normalizeReferenceImages = (images = [], canonicalReference = null) => {
+  const candidates = [];
+
+  if (canonicalReference) {
+    candidates.push(canonicalReference);
+  }
+
+  if (Array.isArray(images)) {
+    candidates.push(...images);
+  }
+
+  const seen = new Set();
+
+  return candidates
+    .map((image) => normalizeReferenceImage(image))
+    .filter(Boolean)
+    .filter((image) => {
+      const signature = [image.url || '', image.path || '', image.base64 ? 'base64' : '', image.imageId || ''].join('|');
+      if (seen.has(signature)) {
+        return false;
+      }
+      seen.add(signature);
+      return true;
+    })
+    .slice(0, MAX_REFERENCE_IMAGES);
 };
 
 const toTokenSet = (value) => {
@@ -133,6 +199,29 @@ const buildQualityLine = () => {
   return 'QUALITY RULES: coherent chapter-to-chapter character continuity, no random redesign, no alternative character design, no extra unrelated props, no text, no watermark, no logo, no palette chart, no style drift, no face drift, no hairstyle drift, and no eye-style drift.';
 };
 
+const buildPolicyLine = (generationPolicy = {}) => {
+  const fragments = [];
+
+  if (generationPolicy.strictIdentityMode !== false) {
+    fragments.push('PRODUCTION POLICY: strict identity mode is enabled.');
+  }
+
+  if (generationPolicy.allowProviderFallback === false) {
+    fragments.push('Do not switch to another provider if the primary engine cannot preserve identity.');
+    fragments.push('Fail closed instead of accepting a cross-provider fallback.');
+  }
+
+  if (generationPolicy.qaMode === 'blocking') {
+    fragments.push('QA POLICY: reject any output that shows identity drift, non-narrative artifacts, or style drift.');
+  }
+
+  if (generationPolicy.sceneSpecMode === 'structured') {
+    fragments.push('SCENE POLICY: use a structured scene blueprint as the primary planning input before rendering.');
+  }
+
+  return fragments.join(' ');
+};
+
 const buildNegativePrompt = () => {
   return [
     'text',
@@ -195,7 +284,7 @@ const buildInvariants = ({ mainCharacter, artStyle }) => {
   return invariants;
 };
 
-const buildCharacterPack = ({ mainCharacter, promptProfile, validatedAt }) => {
+const buildCharacterPack = ({ mainCharacter, promptProfile, validatedAt, referenceImages = [] }) => {
   const canonicalReference = {
     imageId: mainCharacter.referenceImageId || 'main-character-reference',
     url: mainCharacter.referenceImage || null,
@@ -203,6 +292,7 @@ const buildCharacterPack = ({ mainCharacter, promptProfile, validatedAt }) => {
     base64: mainCharacter.referenceImageBase64 || null,
     mimeType: mainCharacter.referenceImageMimeType || 'image/png'
   };
+  const normalizedReferenceImages = normalizeReferenceImages(referenceImages, canonicalReference);
 
   return {
     version: PACK_VERSION,
@@ -211,7 +301,16 @@ const buildCharacterPack = ({ mainCharacter, promptProfile, validatedAt }) => {
     validatedAt,
     identityHash: promptProfile.identityHash,
     canonicalReference,
-    referenceImages: [canonicalReference].filter((entry) => entry.url || entry.path || entry.base64),
+    referenceImages: normalizedReferenceImages,
+    referenceImageCount: normalizedReferenceImages.length,
+    multiReferenceReady: normalizedReferenceImages.length > 1,
+    trainingReady: normalizedReferenceImages.length > 0,
+    trainingRecipe: {
+      mode: 'character-pack',
+      minRecommendedImages: 20,
+      targetImages: 30,
+      maxImages: MAX_REFERENCE_IMAGES
+    },
     invariants: [
       promptProfile.promptSections?.invariantPrompt || '',
       promptProfile.promptSections?.referencePrompt || '',
@@ -229,7 +328,8 @@ const buildCharacterPack = ({ mainCharacter, promptProfile, validatedAt }) => {
       faceHair: promptProfile.consistencyAnchors?.faceHair || [],
       age: promptProfile.consistencyAnchors?.age || [],
       clothing: promptProfile.consistencyAnchors?.clothing || []
-    }
+    },
+    trainingArtifacts: mainCharacter.trainingArtifacts || null
   };
 };
 
@@ -264,6 +364,25 @@ const buildStylePack = ({ mainCharacter, artStyle, promptProfile, validatedAt })
   };
 };
 
+const buildGenerationPolicy = ({ promptProfile }) => ({
+  version: SPEC_VERSION,
+  strictIdentityMode: true,
+  allowProviderFallback: false,
+  allowRemixRecovery: true,
+  qaMode: 'blocking',
+  sceneSpecMode: 'structured',
+  identitySource: 'character-pack',
+  trainingMode: 'character-pack',
+  maxReferenceImages: MAX_REFERENCE_IMAGES,
+  promptPolicyLine: buildPolicyLine({
+    strictIdentityMode: true,
+    allowProviderFallback: false,
+    qaMode: 'blocking',
+    sceneSpecMode: 'structured'
+  }),
+  identityHash: promptProfile.identityHash
+});
+
 export const buildVisualIdentityPromptProfile = (spec = {}) => {
   const normalizedMainCharacter = {
     name: toCleanString(spec?.mainCharacter?.name || spec?.character?.name),
@@ -277,13 +396,36 @@ export const buildVisualIdentityPromptProfile = (spec = {}) => {
     referenceImageBase64: toCleanString(spec?.mainCharacter?.referenceImageBase64 || spec?.character?.referenceImageBase64),
     referenceImageMimeType: toCleanString(spec?.mainCharacter?.referenceImageMimeType || spec?.character?.referenceImageMimeType),
     referenceImageId: toCleanString(spec?.mainCharacter?.referenceImageId || spec?.character?.referenceImageId),
-    colorPalette: normalizePalette(spec?.mainCharacter?.colorPalette || spec?.palette)
+    colorPalette: normalizePalette(spec?.mainCharacter?.colorPalette || spec?.palette),
+    trainingArtifacts: spec?.mainCharacter?.trainingArtifacts || spec?.trainingArtifacts || null,
+    referenceImages: Array.isArray(spec?.mainCharacter?.referenceImages)
+      ? spec.mainCharacter.referenceImages
+      : (Array.isArray(spec?.referenceImages) ? spec.referenceImages : [])
   };
 
   const artStyle = {
     id: toCleanString(spec?.artStyle?.id || spec?.artisticStyle),
     prompt: toCleanString(spec?.artStyle?.prompt || spec?.stylePrompt)
   };
+  const generationPolicy = buildGenerationPolicy({
+    promptProfile: {
+      identityHash: stableHash({
+        version: SPEC_VERSION,
+        mainCharacter: {
+          name: normalizedMainCharacter.name,
+          age: normalizedMainCharacter.age,
+          appearance: normalizedMainCharacter.appearance,
+          description: normalizedMainCharacter.description,
+          clothing: normalizedMainCharacter.clothing,
+          referencePrompt: normalizedMainCharacter.referencePrompt,
+          referenceImagePath: normalizedMainCharacter.referenceImagePath,
+          referenceImageId: normalizedMainCharacter.referenceImageId,
+          colorPalette: normalizedMainCharacter.colorPalette
+        },
+        artStyle
+      })
+    }
+  });
 
   const identityHash = stableHash({
     version: SPEC_VERSION,
@@ -321,12 +463,15 @@ export const buildVisualIdentityPromptProfile = (spec = {}) => {
 
   const invariantPrompt = buildCharacterLockLine(normalizedMainCharacter);
   const referencePrompt = normalizedMainCharacter.referenceImage || normalizedMainCharacter.referenceImagePath || normalizedMainCharacter.referenceImageBase64
-    ? 'REFERENCE LOCK: use the selected visual identity image as the canonical visual anchor for every page.'
+    ? (normalizedMainCharacter.referenceImages.length > 1
+      ? 'REFERENCE LOCK: use the selected visual identity image pack as the canonical visual anchor for every page.'
+      : 'REFERENCE LOCK: use the selected visual identity image as the canonical visual anchor for every page.')
     : '';
   const stylePrompt = buildStyleLine(artStyle);
   const palettePrompt = buildPaletteLine(normalizedMainCharacter.colorPalette);
   const sceneGuardPrompt = buildSceneGuardLine();
   const qualityPrompt = buildQualityLine();
+  const policyPrompt = buildPolicyLine(generationPolicy);
   const negativePrompt = buildNegativePrompt();
 
   return {
@@ -338,6 +483,7 @@ export const buildVisualIdentityPromptProfile = (spec = {}) => {
       'stylePrompt',
       'palettePrompt',
       'sceneGuardPrompt',
+      'policyPrompt',
       'pagePrompt',
       'scenePrompt',
       'continuityPrompt',
@@ -351,6 +497,7 @@ export const buildVisualIdentityPromptProfile = (spec = {}) => {
       stylePrompt,
       palettePrompt,
       sceneGuardPrompt,
+      policyPrompt,
       qualityPrompt,
       negativePrompt
     },
@@ -375,6 +522,10 @@ export const buildVisualIdentityPromptProfile = (spec = {}) => {
       referenceImageId: normalizedMainCharacter.referenceImageId,
       colorPalette: normalizedMainCharacter.colorPalette,
       artStyle
+    },
+    generationPolicy: {
+      ...generationPolicy,
+      identityHash
     }
   };
 };
@@ -392,7 +543,14 @@ export const buildVisualIdentitySpec = ({ project, mainCharacterData }) => {
     referenceImageBase64: toCleanString(mainCharacterData?.referenceImageBase64),
     referenceImageMimeType: toCleanString(mainCharacterData?.referenceImageMimeType),
     referenceImageId: toCleanString(mainCharacterData?.referenceImageId),
-    colorPalette: normalizePalette(mainCharacterData?.colorPalette)
+    colorPalette: normalizePalette(mainCharacterData?.colorPalette),
+    referenceImages: Array.isArray(mainCharacterData?.referenceImages)
+      ? mainCharacterData.referenceImages
+      : [],
+    trainingArtifacts: mainCharacterData?.trainingArtifacts
+      || project?.visualIdentitySpec?.trainingArtifacts
+      || project?.visualIdentity?.mainCharacter?.trainingArtifacts
+      || null
   };
 
   const artStyle = {
@@ -412,17 +570,22 @@ export const buildVisualIdentitySpec = ({ project, mainCharacterData }) => {
     artStyle,
     invariants: [],
     promptProfile,
+    generationPolicy: buildGenerationPolicy({ promptProfile }),
     characterPack: buildCharacterPack({
       mainCharacter,
       promptProfile,
-      validatedAt
+      validatedAt,
+      referenceImages: Array.isArray(mainCharacterData?.referenceImages)
+        ? mainCharacterData.referenceImages
+        : []
     }),
     stylePack: buildStylePack({
       mainCharacter,
       artStyle,
       promptProfile,
       validatedAt
-    })
+    }),
+    trainingArtifacts: mainCharacter.trainingArtifacts || null
   };
 
   spec.invariants = buildInvariants({
@@ -479,6 +642,7 @@ export const validateVisualIdentitySpec = (spec) => {
     errors.push('invariants doit contenir au moins une regle.');
   }
 
+  const requiresPolicySections = spec.version === SPEC_VERSION || Boolean(spec.generationPolicy);
   if (spec.promptProfile && typeof spec.promptProfile === 'object') {
     const sections = spec.promptProfile.promptSections || {};
     if (!toCleanString(sections.invariantPrompt)) {
@@ -492,6 +656,18 @@ export const validateVisualIdentitySpec = (spec) => {
     }
     if (!toCleanString(sections.sceneGuardPrompt)) {
       errors.push('promptProfile.promptSections.sceneGuardPrompt est requis.');
+    }
+    if (requiresPolicySections && typeof sections.policyPrompt !== 'string') {
+      errors.push('promptProfile.promptSections.policyPrompt est requis.');
+    }
+  }
+
+  if (requiresPolicySections && spec.generationPolicy && typeof spec.generationPolicy === 'object') {
+    if (spec.generationPolicy.allowProviderFallback !== false) {
+      errors.push('generationPolicy.allowProviderFallback doit etre false.');
+    }
+    if (spec.generationPolicy.strictIdentityMode !== true) {
+      errors.push('generationPolicy.strictIdentityMode doit etre true.');
     }
   }
 

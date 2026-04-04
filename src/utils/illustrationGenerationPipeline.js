@@ -20,11 +20,13 @@ import { evaluateIllustrationCandidate } from './illustrationEvaluation';
 import { prepareGeneratorRequest, selectGeneratorStrategy } from './illustrationGeneratorStrategies';
 import {
   fallbackImageProvider,
+  imageProviderFal,
   imageProviderIdeogram,
   imageProviderOpenAI,
   selectPrimaryImageProvider
 } from './imageProviders';
 import { electronBridge } from './electronBridge';
+import { waitForFalServiceReady } from './falServiceGuard';
 import { createTransientOpenAIError, waitForOpenAIServiceReady } from './openaiServiceGuard';
 import { createTransientIdeogramError, waitForIdeogramServiceReady } from './ideogramServiceGuard';
 
@@ -384,7 +386,8 @@ const buildPageDecisionTrace = ({
   selectedVariant,
   pipelineVersion,
   attempts,
-  passName
+  passName,
+  allowProviderFallback
 }) => {
   const generationTrace = selectedVariant?.generationTrace || {};
   return {
@@ -393,6 +396,7 @@ const buildPageDecisionTrace = ({
     providerUsed: generationTrace.providerUsed || primaryProviderId || null,
     providerLabel: generationTrace.providerLabel || null,
     fallbackProviderId: secondaryProviderId || null,
+    fallbackAllowed: Boolean(allowProviderFallback),
     characterReferenceUsed: Boolean(generationTrace.hasCharacterReference),
     styleReferenceUsed: Boolean(generationTrace.hasStyleReference),
     remixUsed: Boolean(generationTrace.usedRemix),
@@ -710,12 +714,18 @@ export async function generateIllustrationWithAutoPipeline({
   currentProject,
   page,
   openaiServiceUrl,
+  falServiceUrl,
   ideogramServiceUrl,
   mode = 'page'
 }) {
   const runtimeConfig = await getRuntimePipelineConfig();
-  await waitForOpenAIServiceReady(openaiServiceUrl);
-  const primaryProviderId = selectPrimaryImageProvider({ ideogramServiceUrl, openaiServiceUrl });
+  if (openaiServiceUrl) {
+    await waitForOpenAIServiceReady(openaiServiceUrl);
+  }
+  const primaryProviderId = selectPrimaryImageProvider({ falServiceUrl, ideogramServiceUrl, openaiServiceUrl });
+  if (primaryProviderId === 'fal') {
+    await waitForFalServiceReady(falServiceUrl);
+  }
   if (primaryProviderId === 'ideogram') {
     await waitForIdeogramServiceReady(ideogramServiceUrl);
   }
@@ -725,29 +735,37 @@ export async function generateIllustrationWithAutoPipeline({
     bookSummary: currentProject.summary || currentProject.description,
     characters: currentProject.characters || [],
     targetAge: currentProject.targetAge,
-    openaiServiceUrl
+    openaiServiceUrl,
+    template: page.template
   });
+  const sceneSpec = sceneDescription.blueprint || null;
 
   const preliminaryBundle = buildIllustrationConstraintBundle({
     currentProject,
     page,
     pageText,
-    sceneDescription
+    sceneDescription: sceneDescription.description,
+    sceneSpec
   });
   const recommendedDalleParams = getRecommendedDalleParams(page, currentProject.bookFormat || currentProject.format || '8x10');
   const dalleParams = {
     ...recommendedDalleParams,
     size: runtimeConfig.forcedImageSize || recommendedDalleParams.size
   };
-  const primaryProvider = primaryProviderId === 'ideogram'
-    ? imageProviderIdeogram({ serviceUrl: ideogramServiceUrl })
-    : imageProviderOpenAI({ serviceUrl: openaiServiceUrl });
-  const secondaryProviderId = fallbackImageProvider(primaryProviderId);
-  const secondaryProvider = secondaryProviderId === 'ideogram'
-    ? imageProviderIdeogram({ serviceUrl: ideogramServiceUrl })
-    : secondaryProviderId === 'openai'
-      ? imageProviderOpenAI({ serviceUrl: openaiServiceUrl })
-      : null;
+  const primaryProvider = primaryProviderId === 'fal'
+    ? imageProviderFal({ serviceUrl: falServiceUrl })
+    : primaryProviderId === 'ideogram'
+      ? imageProviderIdeogram({ serviceUrl: ideogramServiceUrl })
+      : imageProviderOpenAI({ serviceUrl: openaiServiceUrl });
+  const allowProviderFallback = preliminaryBundle?.generationPolicy?.allowProviderFallback !== false;
+  const secondaryProviderId = allowProviderFallback ? fallbackImageProvider(primaryProviderId) : null;
+  const secondaryProvider = secondaryProviderId === 'fal'
+    ? imageProviderFal({ serviceUrl: falServiceUrl })
+    : secondaryProviderId === 'ideogram'
+      ? imageProviderIdeogram({ serviceUrl: ideogramServiceUrl })
+      : secondaryProviderId === 'openai'
+        ? imageProviderOpenAI({ serviceUrl: openaiServiceUrl })
+        : null;
   const requestGeneratedImage = createProviderRequestRunner({
     provider: primaryProvider,
     providerId: primaryProviderId,
@@ -770,7 +788,7 @@ export async function generateIllustrationWithAutoPipeline({
         dalleParams,
         passName: 'fallback'
       })
-    : null;
+      : null;
   const isStrictIdeogramMode = primaryProviderId === 'ideogram';
 
   const candidateCount = mode === 'batch'
@@ -791,7 +809,8 @@ export async function generateIllustrationWithAutoPipeline({
       currentProject,
       page,
       pageText,
-      sceneDescription: finalConstraintBundle?.page?.sceneDescription || sceneDescription
+      sceneDescription: finalConstraintBundle?.page?.sceneDescription || sceneDescription.description,
+      sceneSpec
     });
 
     const pass1 = await runPass({
@@ -824,7 +843,8 @@ export async function generateIllustrationWithAutoPipeline({
         selectedVariant,
         pipelineVersion: '3.0',
         attempts: passResults.flatMap((result) => result.attempts),
-        passName: 'pass-1'
+        passName: 'pass-1',
+        allowProviderFallback
       });
       logPageDecision(pageDecision);
 
@@ -862,7 +882,7 @@ export async function generateIllustrationWithAutoPipeline({
     });
     passResults.push(pass2);
     const primaryProducedAnyVariants = passResults.some((result) => result.passName !== 'fallback' && Array.isArray(result.variants) && result.variants.length > 0);
-    const allowSecondaryFallback = !isStrictIdeogramMode || !primaryProducedAnyVariants;
+    const allowSecondaryFallback = allowProviderFallback && (!isStrictIdeogramMode || !primaryProducedAnyVariants);
 
     if (!pass2.accepted && requestRemixImage) {
       const remixSource = pass2.bestVariant || pass1.bestVariant || null;
@@ -912,7 +932,8 @@ export async function generateIllustrationWithAutoPipeline({
                 selectedVariant,
                 pipelineVersion: '3.0',
                 attempts: passResults.flatMap((result) => result.attempts),
-                passName: 'remix'
+                passName: 'remix',
+                allowProviderFallback
               });
               logPageDecision(pageDecision);
 
@@ -1001,7 +1022,8 @@ export async function generateIllustrationWithAutoPipeline({
           selectedVariant,
           pipelineVersion: '3.0',
           attempts: passResults.flatMap((result) => result.attempts),
-          passName: 'fallback'
+          passName: 'fallback',
+          allowProviderFallback
         });
         logPageDecision(pageDecision);
 
@@ -1057,56 +1079,57 @@ export async function generateIllustrationWithAutoPipeline({
         if (!pass2.accepted) {
           if (!allowSecondaryFallback) {
             console.warn(
-              `[illustrationPipeline] Page ${page.number}: Ideogram produced candidates but none met the strict gate; refusing OpenAI fallback to avoid degraded output.`
+              `[illustrationPipeline] Page ${page.number}: primary provider produced candidates but none met the strict gate; refusing provider fallback to avoid degraded output.`
             );
           } else {
-          const fallbackReason = pass2.variants.length === 0 && pass1.variants.length > 0
-            ? 'safe mode produced no strictly acceptable candidate; reusing least bad pass-1 candidate'
-            : (fallbackSourceVariant?.safeMode || bestFallbackCandidate?.variant?.safeMode)
-              ? 'safe mode fallback accepted'
-              : 'all candidates rejected -> fallback triggered';
-          const fallbackDecision = buildFallbackDecision(fallbackSourceVariant || bestFallbackCandidate?.variant, fallbackReason, {
-            mode,
-            pageNumber: page.number,
-            attempts: passResults.flatMap((result) => result.attempts),
-            pipelineVersion: '3.0'
-          });
-
-          if (!fallbackDecision) {
-            console.warn(
-              `[illustrationPipeline] Page ${page.number}: all candidates rejected and no fallback-eligible candidate exists.`
-            );
-          } else {
-            const pageDecision = buildPageDecisionTrace({
+            const fallbackReason = pass2.variants.length === 0 && pass1.variants.length > 0
+              ? 'safe mode produced no strictly acceptable candidate; reusing least bad pass-1 candidate'
+              : (fallbackSourceVariant?.safeMode || bestFallbackCandidate?.variant?.safeMode)
+                ? 'safe mode fallback accepted'
+                : 'all candidates rejected -> fallback triggered';
+            const fallbackDecision = buildFallbackDecision(fallbackSourceVariant || bestFallbackCandidate?.variant, fallbackReason, {
+              mode,
               pageNumber: page.number,
-              primaryProviderId,
-              secondaryProviderId,
-              selectedVariant: fallbackDecision.selectedVariant,
-              pipelineVersion: '3.0',
-              attempts: fallbackDecision.attempts,
-              passName: finalPass.passName
+              attempts: passResults.flatMap((result) => result.attempts),
+              pipelineVersion: '3.0'
             });
-            logPageDecision(pageDecision);
-            return {
-              selectedVariant: fallbackDecision.selectedVariant,
-              variants,
-              scene: selectedVariant.sceneDescription,
-              dalleParams,
-              identityHash: finalConstraintBundle.identityHash,
-              identityVersion: finalConstraintBundle.spec?.version || null,
-              fallbackAccepted: fallbackDecision.fallbackAccepted,
-              fallbackReason: fallbackDecision.fallbackReason,
-              finalDecisionType: fallbackDecision.finalDecisionType,
-              attempts: fallbackDecision.attempts,
-              pipeline: {
-                version: '3.0',
-                passedIn: finalPass.passName,
-                constraintBundle: summarizeConstraintBundle(finalConstraintBundle),
-                passResults,
-                pageDecision
-              }
-            };
-          }
+
+            if (!fallbackDecision) {
+              console.warn(
+                `[illustrationPipeline] Page ${page.number}: all candidates rejected and no fallback-eligible candidate exists.`
+              );
+            } else {
+              const pageDecision = buildPageDecisionTrace({
+                pageNumber: page.number,
+                primaryProviderId,
+                secondaryProviderId,
+                selectedVariant: fallbackDecision.selectedVariant,
+                pipelineVersion: '3.0',
+                attempts: fallbackDecision.attempts,
+                passName: finalPass.passName,
+                allowProviderFallback
+              });
+              logPageDecision(pageDecision);
+              return {
+                selectedVariant: fallbackDecision.selectedVariant,
+                variants,
+                scene: selectedVariant.sceneDescription,
+                dalleParams,
+                identityHash: finalConstraintBundle.identityHash,
+                identityVersion: finalConstraintBundle.spec?.version || null,
+                fallbackAccepted: fallbackDecision.fallbackAccepted,
+                fallbackReason: fallbackDecision.fallbackReason,
+                finalDecisionType: fallbackDecision.finalDecisionType,
+                attempts: fallbackDecision.attempts,
+                pipeline: {
+                  version: '3.0',
+                  passedIn: finalPass.passName,
+                  constraintBundle: summarizeConstraintBundle(finalConstraintBundle),
+                  passResults,
+                  pageDecision
+                }
+              };
+            }
           }
         } else {
           const pageDecision = buildPageDecisionTrace({
@@ -1116,7 +1139,8 @@ export async function generateIllustrationWithAutoPipeline({
             selectedVariant,
             pipelineVersion: '3.0',
             attempts: passResults.flatMap((result) => result.attempts),
-            passName: 'pass-2'
+            passName: 'pass-2',
+            allowProviderFallback
           });
           logPageDecision(pageDecision);
           return {
@@ -1162,7 +1186,8 @@ export async function generateIllustrationWithAutoPipeline({
             selectedVariant: fallbackDecision.selectedVariant,
             pipelineVersion: '3.0',
             attempts: fallbackDecision.attempts,
-            passName: finalPass.passName
+            passName: finalPass.passName,
+            allowProviderFallback
           });
           logPageDecision(pageDecision);
           return {
@@ -1188,12 +1213,10 @@ export async function generateIllustrationWithAutoPipeline({
       }
     }
 
-    if (batchAttempt >= runtimeConfig.maxBatchRetries && bestFallbackCandidate?.variant && (allowSecondaryFallback || isStrictIdeogramMode)) {
-      const fallbackReason = isStrictIdeogramMode && !allowSecondaryFallback
-        ? 'strict Ideogram gate fallback accepted without OpenAI rescue'
-        : (bestFallbackCandidate.variant.safeMode
-          ? 'safe mode fallback accepted'
-          : 'all candidates rejected -> fallback triggered');
+    if (allowSecondaryFallback && batchAttempt >= runtimeConfig.maxBatchRetries && bestFallbackCandidate?.variant) {
+      const fallbackReason = bestFallbackCandidate.variant.safeMode
+        ? 'safe mode fallback accepted'
+        : 'all candidates rejected -> fallback triggered';
       const fallbackDecision = buildFallbackDecision(bestFallbackCandidate.variant, fallbackReason, {
         mode,
         pageNumber: page.number,
@@ -1207,7 +1230,8 @@ export async function generateIllustrationWithAutoPipeline({
         selectedVariant: fallbackDecision.selectedVariant,
         pipelineVersion: '3.0',
         attempts: fallbackDecision.attempts,
-        passName: bestFallbackCandidate.passName
+        passName: bestFallbackCandidate.passName,
+        allowProviderFallback
       });
       logPageDecision(pageDecision);
 
@@ -1235,5 +1259,9 @@ export async function generateIllustrationWithAutoPipeline({
     lastError = new Error(`Aucune illustration acceptable générée pour la page ${page.number} après ${batchAttempt + 1} tentative(s) pipeline.`);
   }
 
-  throw lastError || new Error(`?chec final de g?n?ration pour la page ${page.number}`);
+  if (allowProviderFallback === false) {
+    throw lastError || new Error(`Echec strict de generation pour la page ${page.number}: aucune illustration acceptable ne respecte la politique d'identite.`);
+  }
+
+  throw lastError || new Error(`Echec final de generation pour la page ${page.number}`);
 }

@@ -31,6 +31,7 @@ export const AppProvider = ({ children }) => {
   const [currentProject, setCurrentProject] = useState(null);
   const [openaiPort, setOpenaiPort] = useState(null);
   const [ideogramPort, setIdeogramPort] = useState(null);
+  const [falPort, setFalPort] = useState(null);
   const [autoSaveEnabled, setAutoSaveEnabled] = useState(true);
   const [autosaveRevision, setAutosaveRevision] = useState(0);
   
@@ -42,6 +43,7 @@ export const AppProvider = ({ children }) => {
     loadProjects();
     initializeOpenAI();
     initializeIdeogram();
+    initializeFal();
   }, []);
 
   useEffect(() => {
@@ -133,6 +135,15 @@ export const AppProvider = ({ children }) => {
   const initializeIdeogram = async () => {
     const port = await electronBridge.ideogram.getPort();
     setIdeogramPort(port);
+  };
+
+  const initializeFal = async () => {
+    if (!electronBridge.fal || typeof electronBridge.fal.getPort !== 'function') {
+      return;
+    }
+
+    const port = await electronBridge.fal.getPort();
+    setFalPort(port);
   };
 
   const loadProjects = async () => {
@@ -411,6 +422,7 @@ export const AppProvider = ({ children }) => {
 
   const openaiServiceUrl = openaiPort ? `http://localhost:${openaiPort}` : null;
   const ideogramServiceUrl = ideogramPort ? `http://localhost:${ideogramPort}` : null;
+  const falServiceUrl = falPort ? `http://localhost:${falPort}` : null;
 
   const value = {
     projects,
@@ -428,6 +440,8 @@ export const AppProvider = ({ children }) => {
     openaiPort,
     ideogramServiceUrl,
     ideogramPort,
+    falServiceUrl,
+    falPort,
     autoSaveEnabled,
     setAutoSaveEnabled
   };

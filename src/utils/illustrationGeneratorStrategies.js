@@ -17,6 +17,21 @@ const buildAdditionalGuidedContext = (constraintBundle, strategy) => {
     parts.push(constraintBundle?.guidance?.noReinterpretationDirective || '');
   }
 
+  if (constraintBundle?.sceneSpec) {
+    const sceneSpec = constraintBundle.sceneSpec;
+    parts.push([
+      `Scene blueprint: subject=${sceneSpec.subject || 'main character'}`,
+      `action=${sceneSpec.action || ''}`,
+      `setting=${sceneSpec.setting || ''}`,
+      `mood=${sceneSpec.mood || ''}`,
+      `composition=${sceneSpec.composition || ''}`
+    ].join(', '));
+  }
+
+  if (constraintBundle?.generationPolicy?.promptPolicyLine) {
+    parts.push(constraintBundle.generationPolicy.promptPolicyLine);
+  }
+
   return parts.filter(Boolean).join(' ');
 };
 

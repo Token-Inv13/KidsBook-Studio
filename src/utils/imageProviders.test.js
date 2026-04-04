@@ -2,6 +2,7 @@
 
 import {
   fallbackImageProvider,
+  imageProviderFal,
   imageProviderIdeogram,
   imageProviderOpenAI,
   selectPrimaryImageProvider
@@ -37,14 +38,47 @@ describe('imageProviders', () => {
     jest.clearAllMocks();
   });
 
-  test('selects Ideogram as primary when available and OpenAI as fallback', () => {
+  test('selects fal as primary when available and chains fallbacks', () => {
     expect(selectPrimaryImageProvider({
+      falServiceUrl: 'http://localhost:3003',
       ideogramServiceUrl: 'http://localhost:3002',
       openaiServiceUrl: 'http://localhost:3001'
-    })).toBe('ideogram');
+    })).toBe('fal');
 
+    expect(fallbackImageProvider('fal')).toBe('ideogram');
     expect(fallbackImageProvider('ideogram')).toBe('openai');
     expect(fallbackImageProvider('openai')).toBeNull();
+  });
+
+  test('builds a fal.ai payload with LoRA weights when training artifacts are available', async () => {
+    const provider = imageProviderFal({ serviceUrl: 'http://localhost:3003' });
+
+    const result = await provider.generateCandidate({
+      prompt: 'A child in a rainy village',
+      dalleParams: { size: '1024x1024' },
+      constraintBundle: {
+        trainingArtifacts: {
+          fal: {
+            artifacts: {
+              modelUrl: 'https://example.com/model.safetensors'
+            },
+            strength: 0.9
+          }
+        }
+      },
+      strategyMetadata: {
+        negativePrompt: 'no text'
+      },
+      variantIndex: 1
+    });
+
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    const [, options] = global.fetch.mock.calls[0];
+    const body = JSON.parse(options.body);
+    expect(body.loras).toHaveLength(1);
+    expect(body.loras[0].path).toBe('https://example.com/model.safetensors');
+    expect(body.loras[0].scale).toBe(0.9);
+    expect(result.url).toBe('https://example.com/generated.png');
   });
 
   test('builds an Ideogram generate payload with character and style references', async () => {

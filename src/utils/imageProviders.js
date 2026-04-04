@@ -110,6 +110,68 @@ export const imageProviderOpenAI = ({ serviceUrl }) => {
   });
 };
 
+export const imageProviderFal = ({ serviceUrl }) => {
+  return createLocalImageProvider({
+    id: 'fal',
+    label: 'fal.ai',
+    serviceUrl,
+    supportsRemix: false,
+    buildRequestBody: ({
+      prompt,
+      dalleParams,
+      constraintBundle,
+      strategyMetadata,
+      variantIndex = 0
+    }) => {
+      const trainingArtifacts = constraintBundle?.trainingArtifacts
+        || constraintBundle?.spec?.trainingArtifacts
+        || constraintBundle?.characterPack?.trainingArtifacts
+        || null;
+      const loraUrl = trainingArtifacts?.fal?.artifacts?.modelUrl
+        || trainingArtifacts?.fal?.modelUrl
+        || trainingArtifacts?.modelUrl
+        || trainingArtifacts?.diffusersLoraFile?.url
+        || null;
+
+      const loras = loraUrl
+        ? [{
+            path: loraUrl,
+            scale: Number(trainingArtifacts?.fal?.strength || trainingArtifacts?.strength || 0.85)
+          }]
+        : [];
+
+      return {
+        prompt,
+        size: dalleParams?.size || DEFAULT_IMAGE_SIZE,
+        loras,
+        numImages: 1,
+        negativePrompt: strategyMetadata?.negativePrompt || null,
+        seed: variantIndex + 1,
+        guidanceScale: 3.5,
+        steps: 28
+      };
+    },
+    extractResponseImage: (payload) => {
+      const images = Array.isArray(payload?.images) ? payload.images : [];
+      const first = images[0] || {};
+
+      return {
+        url: first.url || payload?.url || null,
+        revised_prompt: first.revised_prompt || first.prompt || payload?.revised_prompt || '',
+        requestId: payload?.requestId || null,
+        images: images.map((entry) => ({
+          url: entry.url || null,
+          revised_prompt: entry.revised_prompt || entry.prompt || '',
+          requestId: payload?.requestId || null,
+          seed: entry.seed || null,
+          width: entry.width || null,
+          height: entry.height || null
+        })).filter((entry) => entry.url)
+      };
+    }
+  });
+};
+
 export const imageProviderIdeogram = ({ serviceUrl }) => {
   return createLocalImageProvider({
     id: 'ideogram',
@@ -180,7 +242,11 @@ export const imageProviderIdeogram = ({ serviceUrl }) => {
   });
 };
 
-export const selectPrimaryImageProvider = ({ ideogramServiceUrl, openaiServiceUrl }) => {
+export const selectPrimaryImageProvider = ({ falServiceUrl, ideogramServiceUrl, openaiServiceUrl }) => {
+  if (typeof falServiceUrl === 'string' && /^https?:\/\//i.test(falServiceUrl)) {
+    return 'fal';
+  }
+
   if (typeof ideogramServiceUrl === 'string' && /^https?:\/\//i.test(ideogramServiceUrl)) {
     return 'ideogram';
   }
@@ -193,6 +259,10 @@ export const selectPrimaryImageProvider = ({ ideogramServiceUrl, openaiServiceUr
 };
 
 export const fallbackImageProvider = (primaryProviderId) => {
+  if (primaryProviderId === 'fal') {
+    return 'ideogram';
+  }
+
   if (primaryProviderId === 'ideogram') {
     return 'openai';
   }

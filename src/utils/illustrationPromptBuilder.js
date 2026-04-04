@@ -427,6 +427,7 @@ export const buildIllustrationPrompt = ({
   const fragileCaseLine = buildFragileCaseLine(fragileConsistencyMode);
   const finalIllustrationPrompt = buildFinalIllustrationLine();
   const negativeConstraintPrompt = buildGlobalNegativeConstraintLine();
+  const policyPrompt = profile.promptSections?.policyPrompt || '';
   const strongReferenceLine = strongReferenceMode
     ? 'STRONG VISUAL MATCH MODE: treat the reference image as a hard visual constraint. Keep the exact same face geometry, eye shape, hair silhouette, outfit silhouette, and body proportions. Reject any redesign, age shift, style shift, parasite element, or non-narrative composition.'
     : '';
@@ -439,6 +440,7 @@ export const buildIllustrationPrompt = ({
     'palettePrompt',
     'fragileConsistencyPrompt',
     'sceneGuardPrompt',
+    'policyPrompt',
     'pagePrompt',
     'scenePrompt',
     'continuityPrompt',
@@ -459,6 +461,7 @@ export const buildIllustrationPrompt = ({
     palettePrompt: profile.promptSections?.palettePrompt || '',
     fragileConsistencyPrompt: fragileCaseLine,
     sceneGuardPrompt: profile.promptSections?.sceneGuardPrompt || '',
+    policyPrompt,
     pagePrompt: pageNarrative ? `PAGE NARRATIVE: ${pageNarrative}` : '',
     scenePrompt: sceneText ? `SCENE DIRECTION: ${sceneText}` : '',
     continuityPrompt: continuityLine,
@@ -483,6 +486,7 @@ export const buildIllustrationPrompt = ({
     promptSections.palettePrompt,
     promptSections.fragileConsistencyPrompt,
     promptSections.sceneGuardPrompt,
+    promptSections.policyPrompt,
     promptSections.pagePrompt,
     promptSections.scenePrompt,
     promptSections.continuityPrompt,

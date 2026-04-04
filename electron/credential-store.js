@@ -4,7 +4,8 @@ const SERVICE_NAME = 'KidsBookStudio';
 
 const ACCOUNTS = {
   openai: 'OpenAI_API_Key',
-  ideogram: 'Ideogram_API_Key'
+  ideogram: 'Ideogram_API_Key',
+  fal: 'Fal_API_Key'
 };
 
 const getAccountName = (provider) => {
